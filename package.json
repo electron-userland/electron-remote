@@ -28,7 +28,9 @@
     "babel-polyfill": "^6.3.14",
     "debug": "^2.2.0",
     "node-uuid": "^1.4.7",
-    "rx": "^4.0.7"
+    "pify": "^2.3.0",
+    "rx": "^4.0.7",
+    "rx-dom": "^7.0.3"
   },
   "devDependencies": {
     "babel-cli": "^6.4.5",
