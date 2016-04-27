@@ -44,6 +44,21 @@ This provides a number of very important advantages:
 * Parameters are serialized directly, so you don't have to try to build strings that can be `eval`d, which is a dangerous endeavor at best.
 * Calling methods on objects is far more convenient than trying to poke at things via a remote eval.
 
+#### How do I get properties if everything is a Promise tho???
+
+Astute observers will note, that getting the value of a property is always a synchronous operation - to facilitate that, any method with `_get()` appended to it will let you fetch the value for the property.
+
+```js
+import { createProxyForRemote } from 'electron-remote';
+
+// myWindowJs is now a proxy object for myWindow's `window` global object
+const myWindowJs = createProxyForRemote(myWindow);
+
+// Functions suffixed with _get will read a value
+myWindowJs.navigator.userAgent_get()
+  .then((agent) => console.log(`The user agent is ${agent}`));
+```
+
 #### But do this first!
 
 Before you use `createProxyForRemote`, you **must** call `initializeEvalHandler()` in the target window on startup. This sets up the listeners that electron-remote will use.
@@ -62,4 +77,28 @@ myWindowProxy.addNumbers(5, 5)
   .then((x) => console.log(x));
   
 >>> 10
+```
+
+## Here Be Dragons
+
+electron-remote has a number of significant caveats versus the remote module that you should definitely be aware of:
+
+* Remote values must be Serializable
+
+Objects that you return to the calling process must be serializable (i.e. you can call `JSON.stringify` on it and get a valid thing)- this means that creating Classes won't work, nor will return objects like BrowserWindows or other Electron objects. For example:
+
+```js
+let myWindowProxy = createProxyForRemote(myWindow);
+
+// XXX: BAD - HTML elements aren't serializable
+let obj = myWindowProxy.document.createElement('h1');
+```
+
+* Remote event listeners aren't supported
+
+Anything that involves an event handler isn't going to work
+
+```js
+// XXX: BAD - You can't add event handlers
+myWindowProxy.document.addEventListener('onBlur', (e) => console.log("Blur!"));
 ```
