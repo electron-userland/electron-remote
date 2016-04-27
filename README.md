@@ -32,7 +32,7 @@ electron-remote is a version of remote that, while less ergonomic, guarantees th
 
 ## Using createProxyForRemote
 
-`createProxyForRemote` is a replacement for places where you would use Electron's `executeJavaScript` method on BrowserWindow or WebView instances - however, it works a little differently. Using a new feature in ES2015 called [proxy objects](), we create an object which represents the `window` object on a remote context, and all method calls get sent as messages to that remote instead of being run immediately, which feels very similar to the `remote` Electron module.
+`createProxyForRemote` is a replacement for places where you would use Electron's `executeJavaScript` method on BrowserWindow or WebView instances - however, it works a little differently. Using a new feature in ES2015 called [proxy objects](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy), we create an object which represents the `window` object on a remote context, and all method calls get sent as messages to that remote instead of being run immediately, which feels very similar to the `remote` Electron module.
 
 This provides a number of very important advantages:
 
