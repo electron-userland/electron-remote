@@ -1,5 +1,4 @@
 import * as executeJsFunc from './execute-js-func';
-import * as remoteAjax from './remote-ajax';
 import * as rendererRequire from './renderer-require';
 
 const executeJsFuncExports = [
@@ -16,6 +15,5 @@ const executeJsFuncExports = [
 
 module.exports = Object.assign(
   executeJsFuncExports.reduce((acc, x) => { acc[x] = executeJsFunc[x]; return acc; }, {}),
-  { remoteAjax: remoteAjax },
   rendererRequire
 );
