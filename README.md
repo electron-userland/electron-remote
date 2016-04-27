@@ -4,6 +4,8 @@ electron-remote provides an alternative to Electron's `remote` module based arou
 
 ## The Quickest of Quick Starts
 
+###### Renderer Taskpool
+
 ```js
 import { requireTaskPool } from 'electron-remote';
 
@@ -13,6 +15,8 @@ const myCoolModule = requireTaskPool(require.resolve('./my-cool-module'));
 // so that your app will not block
 let result = await myCoolModule.calculateDigitsOfPi(100000);
 ```
+
+###### Calling code in other windows
 
 ```js
 import { createProxyForRemote } from 'electron-remote';
