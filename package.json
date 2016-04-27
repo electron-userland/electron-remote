@@ -6,7 +6,8 @@
     "doc": "esdoc -c ./esdoc.json",
     "compile": "babel -d lib/ src/",
     "prepublish": "npm run compile",
-    "test": "electron-mocha --renderer --require ./test/support.js ./test"
+    "test": "electron-mocha --renderer --require ./test/support.js ./test",
+    "node": "cross-env ELECTRON_RUN_AS_NODE=1 ./node_modules/electron-prebuilt-compile/node_modules/.bin/electron"
   },
   "repository": {
     "type": "git",
@@ -41,6 +42,7 @@
     "babel-register": "^6.4.3",
     "chai": "^3.4.1",
     "chai-as-promised": "^5.2.0",
+    "cross-env": "^1.0.7",
     "electron-mocha": "^1.2.2",
     "electron-prebuilt-compile": "^0.37.7",
     "esdoc": "^0.4.3",

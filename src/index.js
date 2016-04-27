@@ -1,6 +1,6 @@
 import * as executeJsFunc from './execute-js-func';
 import * as remoteAjax from './remote-ajax';
-import * as rendererRequire from './rendererRequire';
+import * as rendererRequire from './renderer-require';
 
 const executeJsFuncExports = [
   'createProxyForRemote',
