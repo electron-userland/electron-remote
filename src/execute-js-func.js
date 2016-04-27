@@ -183,6 +183,7 @@ export function setParentInformation(windowOrWebView) {
  *
  * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.
  * @param  {string} str                             The code to execute.
+ * @param  {Number} timeout                         The timeout in milliseconds
  *
  * @return {Observable}                             The result of the evaluation.
  *                                                  Must be JSON-serializable.
@@ -217,6 +218,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
  *
  * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.
  * @param  {string} str                             The code to execute.
+ * @param  {Number} timeout                         The timeout in milliseconds
  *
  * @return {Promise}                             The result of the evaluation.
  *                                               Must be JSON-serializable.
@@ -241,9 +243,9 @@ export function remoteEval(windowOrWebView, str, timeout=5*1000) {
  *                                                  in. If this parameter is
  *                                                  null, this will reference
  *                                                  the browser process.
+ * @param  {Number} timeout         Timeout in milliseconds
  * @param  {string} pathToObject    A path to the object to execute, in dotted
  *                                  form i.e. 'document.querySelector'.
- * @param  {Number} timeout         Timeout in milliseconds
  * @param  {Array} args             The arguments to pass to the method
  *
  * @return {Observable}                The result of evaluating the method or
