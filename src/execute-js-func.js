@@ -324,7 +324,7 @@ export function createProxyForRemote(windowOrWebView) {
   return RecursiveProxyHandler.create('__removeme__', (methodChain, args) => {
     let chain = methodChain.splice(1);
 
-    console.log(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
+    d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
     return executeJavaScriptMethod(windowOrWebView, chain, ...args);
   });
 }
