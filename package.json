@@ -1,6 +1,6 @@
 {
   "name": "electron-remote",
-  "version": "0.0.0",
+  "version": "0.5.0",
   "description": "Execute JavaScript in remote Electron processes, but more betterer",
   "scripts": {
     "doc": "esdoc -c ./esdoc.json",
