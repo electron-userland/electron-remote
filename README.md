@@ -154,5 +154,3 @@ Another method that is included is `downloadFileOrUrl`, which lets you download 
  */
 function downloadFileOrUrl(pathOrUrl, target)
 ```
-
-## Reference
