@@ -4,18 +4,6 @@ electron-remote provides an alternative to Electron's `remote` module based arou
 
 ## The Quickest of Quick Starts
 
-###### Renderer Taskpool
-
-```js
-import { requireTaskPool } from 'electron-remote';
-
-const myCoolModule = requireTaskPool(require.resolve('./my-cool-module'));
-
-// This method will run synchronously, but in a background BrowserWindow process
-// so that your app will not block
-let result = await myCoolModule.calculateDigitsOfPi(100000);
-```
-
 ###### Calling code in other windows
 
 ```js
@@ -26,6 +14,18 @@ const myWindowJs = createProxyForRemote(myWindow);
 
 // Functions suffixed with _get will read a value
 userAgent = await myWindowJs.navigator.userAgent_get()
+```
+
+###### Renderer Taskpool
+
+```js
+import { requireTaskPool } from 'electron-remote';
+
+const myCoolModule = requireTaskPool(require.resolve('./my-cool-module'));
+
+// This method will run synchronously, but in a background BrowserWindow process
+// so that your app will not block
+let result = await myCoolModule.calculateDigitsOfPi(100000);
 ```
 
 ## But I like Remote!
@@ -96,9 +96,63 @@ let obj = myWindowProxy.document.createElement('h1');
 
 * Remote event listeners aren't supported
 
-Anything that involves an event handler isn't going to work
+Anything that involves an event handler isn't going to work:
 
 ```js
 // XXX: BAD - You can't add event handlers
 myWindowProxy.document.addEventListener('onBlur', (e) => console.log("Blur!"));
 ```
+
+## The Renderer Taskpool
+
+Renderer Taskpools provide an automatic way to use BrowserWindows as "background processes" that auto-scales based on usage, similar to Grand Central Dispatch or the .NET TPL Taskpool. This works by allowing you to provide a Module that you'd like to load in the remote processes, which will be loaded and unloaded on the fly according to demand.
+
+Let's look at the example again:
+
+```js
+import { requireTaskPool } from 'electron-remote';
+
+const myCoolModule = requireTaskPool(require.resolve('./my-cool-module'));
+
+// This method will run synchronously, but in a background BrowserWindow process
+// so that your app will not block
+let result = await myCoolModule.calculateDigitsOfPi(100000);
+```
+
+By default, `requireTaskPool` will create up to four background processes to concurrently run JS code on. As these processes become busy, requests will be queued to different processes and wait in line implicitly.
+
+##### More Dragons
+
+Since `requireTaskPool` will create and destroy processes as needed, this means that global variables or other state will be destroyed as well. You can't rely on setting a global variable and having it persist for a period of time longer than one method call.
+
+## The remote-ajax module
+
+One module that is super useful to have from the main process is a way to make network requests using Chromium's networking stack, which correctly does things such as respecting the system proxy settings. To this end, electron-remote comes with a convenient wrapper around Rx-DOM's AJAX methods called `remote-ajax`.
+
+```js
+import { requireTaskPool } from 'electron-remote';
+
+const remoteAjax = requireTaskPool(require.resolve('electron-remote/remote-ajax'));
+
+// Result is the object that XmlHttpRequest gives you
+let result = await remoteAjax.get('https://httpbin.org/get');
+console.log(result.url)
+
+>>> 'https://httpbin.org/get'
+```
+
+See the documentation for [Rx-DOM](https://github.com/Reactive-Extensions/RxJS-DOM/blob/master/modules/main-ajax/readme.md) for how these methods work.
+
+Another method that is included is `downloadFileOrUrl`, which lets you download a file to a target:
+
+```js
+/**
+ * Downloads a path as either a file path or a HTTP URL to a specific place
+ *
+ * @param  {string} pathOrUrl   Either an HTTP URL or a file path.
+ * @return {string}             The contents as a UTF-8 decoded string.
+ */
+function downloadFileOrUrl(pathOrUrl, target)
+```
+
+## Reference
