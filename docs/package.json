@@ -1,0 +1,53 @@
+{
+  "name": "electron-remote",
+  "version": "0.0.0",
+  "description": "Execute JavaScript in remote Electron processes, but more betterer",
+  "scripts": {
+    "doc": "esdoc -c ./esdoc.json",
+    "compile": "babel -d lib/ src/",
+    "prepublish": "npm run compile",
+    "test": "electron-mocha --renderer --require ./test/support.js ./test",
+    "node": "cross-env ELECTRON_RUN_AS_NODE=1 ./node_modules/electron-prebuilt-compile/node_modules/.bin/electron"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paulcbetts/electron-remote"
+  },
+  "keywords": [
+    "remote",
+    "electron",
+    "rx"
+  ],
+  "author": "Paul Betts <paul@paulbetts.org>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/paulcbetts/electron-remote/issues"
+  },
+  "main": "lib/index.js",
+  "homepage": "https://github.com/paulcbetts/electron-remote",
+  "dependencies": {
+    "babel-polyfill": "^6.3.14",
+    "debug": "^2.2.0",
+    "node-uuid": "^1.4.7",
+    "pify": "^2.3.0",
+    "rx": "^4.0.7",
+    "rx-dom": "^7.0.3"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.4.5",
+    "babel-eslint": "^5.0.0-beta6",
+    "babel-plugin-transform-async-to-generator": "^6.7.4",
+    "babel-plugin-transform-runtime": "^6.7.5",
+    "babel-preset-es2016-node5": "^1.1.2",
+    "babel-register": "^6.4.3",
+    "chai": "^3.4.1",
+    "chai-as-promised": "^5.2.0",
+    "cross-env": "^1.0.7",
+    "electron-mocha": "^1.2.2",
+    "electron-prebuilt-compile": "^0.37.7",
+    "esdoc": "^0.4.3",
+    "esdoc-es7-plugin": "0.0.3",
+    "esdoc-plugin-async-to-sync": "^0.5.0",
+    "eslint": "^1.10.3"
+  }
+}

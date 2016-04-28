@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">src/renderer-require.js | electron-compilers API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  <a data-ice="repoURL" href="https://github.com/paulcbetts/electron-remote" class="repo-url-github">Repository</a>
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/src/execute-js-func.js~RecursiveProxyHandler.html">RecursiveProxyHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-createProxyForRemote">createProxyForRemote</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethod">executeJavaScriptMethod</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethodObservable">executeJavaScriptMethodObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-getSenderIdentifier">getSenderIdentifier</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-initializeEvalHandler">initializeEvalHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEval">remoteEval</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEvalObservable">remoteEvalObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-setParentInformation">setParentInformation</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-rendererRequireDirect">rendererRequireDirect</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-requireTaskPool">requireTaskPool</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">src/renderer-require.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">import path from &apos;path&apos;;
+import {AsyncSubject, Observable, Subject} from &apos;rx&apos;;
+
+import {createProxyForRemote, executeJavaScriptMethod, executeJavaScriptMethodObservable, RecursiveProxyHandler} from &apos;./execute-js-func&apos;;
+
+import &apos;./custom-operators&apos;;
+
+const d = require(&apos;debug&apos;)(&apos;electron-remote:renderer-require&apos;);
+
+const BrowserWindow = process.type === &apos;renderer&apos; ?
+  require(&apos;remote&apos;).BrowserWindow :
+  require(&apos;electron&apos;).BrowserWindow;
+
+/**
+ * Creates a BrowserWindow, requires a module in it, then returns a Proxy
+ * object that will call into it. You probably want to use {requireTaskPool}
+ * instead.
+ *
+ * @param  {string} modulePath  The path of the module to include.
+ *
+ * @return {Object}             Returns an Object with a `module` which is a Proxy
+ *                              object, and a `dispose` method that will clean up
+ *                              the window.
+ */
+export async function rendererRequireDirect(modulePath) {
+  let bw = new BrowserWindow({width: 500, height: 500, show: false});
+  let fullPath = require.resolve(modulePath);
+
+  let ready = new Promise((res,rej) =&gt; {
+    bw.webContents.once(&apos;did-finish-load&apos;, () =&gt; res(true));
+    bw.webContents.once(&apos;did-fail-load&apos;, (ev, errCode, errMsg) =&gt; rej(new Error(errMsg)));
+  });
+
+  /* Uncomment for debugging!
+  bw.show();
+  bw.openDevTools();
+  */
+
+  let preloadFile = path.join(__dirname, &apos;renderer-require-preload.html&apos;);
+  bw.loadURL(`file:///${preloadFile}?module=${encodeURIComponent(fullPath)}`);
+  await ready;
+
+  let fail = await executeJavaScriptMethod(bw, &apos;window.moduleLoadFailure&apos;);
+  if (fail) {
+    let msg = await executeJavaScriptMethod(bw, &apos;window.moduleLoadFailure.message&apos;);
+    throw new Error(msg);
+  }
+
+  return {
+    module: createProxyForRemote(bw).requiredModule,
+    executeJavaScriptMethod: (chain, ...args) =&gt; executeJavaScriptMethod(bw, chain, ...args),
+    executeJavaScriptMethodObservable: (chain, ...args) =&gt; executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),
+    dispose: () =&gt; bw.close()
+  };
+}
+
+/**
+ * requires a module in BrowserWindows that are created/destroyed as-needed, and
+ * returns a Proxy object that will secretly marshal invocations to other processes
+ * and marshal back the result. This is the cool method in this library.
+ *
+ * Note that since the global context is created / destroyed, you *cannot* rely
+ * on module state (i.e. global variables) to be consistent
+ *
+ * @param  {string} modulePath       The path to the module. You may have to
+ *                                   `require.resolve` it.
+ * @param  {Number} maxConcurrency   The maximum number of concurrent processes
+ *                                   to run. Defaults to 4.
+ *
+ * @return {Proxy}                   An ES6 Proxy object representing the module.
+ */
+export function requireTaskPool(modulePath, maxConcurrency=4) {
+  return new RendererTaskpoolItem(modulePath, maxConcurrency).moduleProxy;
+}
+
+/**
+ * This class implements the scheduling logic for queuing and dispatching method
+ * invocations to various background windows. It is complicated. But in like,
+ * a cool way.
+ */
+class RendererTaskpoolItem {
+  constructor(modulePath, maxConcurrency) {
+    const freeWindowList = [];
+    const invocationQueue = new Subject();
+    const completionQueue = new Subject();
+
+    // This method will find a window that is currently idle or if it doesn&apos;t
+    // exist, create one.
+    const getOrCreateWindow = () =&gt; {
+      let item = freeWindowList.pop();
+      if (item) return Observable.return(item);
+
+      return Observable.fromPromise(rendererRequireDirect(modulePath));
+    };
+
+    // Here, we set up a pipeline that maps a stream of invocations (i.e.
+    // something we can pass to executeJavaScriptMethod) =&gt; stream of Future
+    // Results from various windows =&gt; Stream of completed results, for which we
+    // throw the Window that completed the result back onto the free window stack.
+    invocationQueue
+      .map(({chain, args, retval}) =&gt; Observable.defer(() =&gt; {
+        return getOrCreateWindow()
+          .flatMap((wnd) =&gt; {
+            d(`Actually invoking ${chain.join(&apos;.&apos;)}(${JSON.stringify(args)})`);
+            let ret = wnd.executeJavaScriptMethodObservable(chain, ...args);
+
+            ret.multicast(retval).connect();
+            return ret.map(() =&gt; wnd).catch(Observable.return(wnd));
+          });
+      }))
+      .merge(maxConcurrency)
+      .subscribe((wnd) =&gt; {
+        if (!wnd || !wnd.dispose) throw new Error(&quot;Bogus!&quot;);
+        freeWindowList.push(wnd);
+        completionQueue.onNext(true);
+      });
+
+    // Here, we create a version of RecursiveProxyHandler that will turn method
+    // invocations into something we can push onto our invocationQueue pipeline.
+    // This is the object that ends up being returned to the caller of
+    // requireTaskPool.
+    this.moduleProxy = RecursiveProxyHandler.create(&apos;__removeme__&apos;, (methodChain, args) =&gt; {
+      let chain = methodChain.splice(1);
+
+      d(`Queuing ${chain.join(&apos;.&apos;)}(${JSON.stringify(args)})`);
+      let retval = new AsyncSubject();
+
+      invocationQueue.onNext({ chain: [&apos;requiredModule&apos;].concat(chain), args, retval });
+      return retval.toPromise();
+    });
+
+    // If we haven&apos;t received any invocations within a certain idle timeout
+    // period, burn all of our BrowserWindow instances
+    completionQueue.guaranteedThrottle(5*1000).subscribe(() =&gt; {
+      d(`Freeing ${freeWindowList.length} taskpool processes`);
+      while (freeWindowList.length &gt; 0) {
+        let wnd = freeWindowList.pop();
+        if (wnd) wnd.dispose();
+      }
+    });
+  }
+}
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.6)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl" href="../../">
+  <title data-ice="title">src/execute-js-func.js | electron-compilers API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  <a data-ice="repoURL" href="https://github.com/paulcbetts/electron-remote" class="repo-url-github">Repository</a>
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/src/execute-js-func.js~RecursiveProxyHandler.html">RecursiveProxyHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-createProxyForRemote">createProxyForRemote</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethod">executeJavaScriptMethod</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethodObservable">executeJavaScriptMethodObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-getSenderIdentifier">getSenderIdentifier</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-initializeEvalHandler">initializeEvalHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEval">remoteEval</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEvalObservable">remoteEvalObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-setParentInformation">setParentInformation</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-rendererRequireDirect">rendererRequireDirect</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-requireTaskPool">requireTaskPool</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><h1 data-ice="title">src/execute-js-func.js</h1>
+<pre class="source-code line-number raw-source-code"><code class="prettyprint linenums" data-ice="content">import uuid from &apos;node-uuid&apos;;
+import {Observable, Disposable, TimeoutError} from &apos;rx&apos;;
+
+const requestChannel = &apos;execute-javascript-request&apos;;
+const responseChannel = &apos;execute-javascript-response&apos;;
+
+let isBrowser = (process.type === &apos;browser&apos;);
+let ipc = require(&apos;electron&apos;)[isBrowser ? &apos;ipcMain&apos; : &apos;ipcRenderer&apos;];
+
+const d = require(isBrowser ? &apos;debug&apos; : &apos;debug/browser&apos;)(&apos;electron-remote:execute-js-func&apos;);
+const BrowserWindow = isBrowser ?
+  require(&apos;electron&apos;).BrowserWindow :
+  require(&apos;remote&apos;).require(&apos;browser-window&apos;);
+
+/**
+ * Determines the identifier for the current process (i.e. the thing we can use
+ * to route messages to it)
+ *
+ * @return {object} An object with either a `guestInstanceId` or a `browserWindowId`
+ */
+export function getSenderIdentifier() {
+  if (isBrowser) return {};
+
+  if (process.guestInstanceId) {
+    return { guestInstanceId: process.guestInstanceId };
+  }
+
+  return {
+    browserWindowId: require(&apos;remote&apos;).getCurrentWindow().id
+  };
+}
+
+/**
+ * Determines a way to send a reply back from an incoming eval request.
+ *
+ * @param  {Object} request   An object returned from {getSenderIdentifier}
+ *
+ * @return {Function}         A function that act like ipc.send, but to a
+ *                            particular process.
+ *
+ * @private
+ */
+function getReplyMethod(request) {
+  let target = findTargetFromParentInfo(request);
+
+  if (target) {
+    return (...a) =&gt; target.send(...a);
+  } else {
+    d(&quot;Using reply to main process&quot;);
+    return (...a) =&gt; ipc.send(...a);
+  }
+}
+
+/**
+ * Turns an IPC channel into an Observable
+ *
+ * @param  {String} channel     The IPC channel to listen to via `ipc.on`
+ *
+ * @return {Observable&lt;Array&gt;}  An Observable which sends IPC args via `onNext`
+ *
+ * @private
+ */
+function listenToIpc(channel) {
+  return Observable.create((subj) =&gt; {
+    let listener = (event, ...args) =&gt; {
+      d(`Got an event for ${channel}: ${JSON.stringify(args)}`);
+      subj.onNext(args);
+    };
+
+    d(`Setting up listener! ${channel}`);
+    ipc.on(channel, listener);
+
+    return Disposable.create(() =&gt;
+      ipc.removeListener(channel, listener));
+  });
+}
+
+/**
+ * Returns a method that will act like `ipc.send` depending on the parameter
+ * passed to it, so you don&apos;t have to check for `webContents`.
+ *
+ * @param  {BrowserWindow|WebView} windowOrWebView    The renderer to send to.
+ *
+ * @return {Function}                                 A function that behaves like
+ *                                                    `ipc.send`.
+ *
+ * @private
+ */
+function getSendMethod(windowOrWebView) {
+  if (!windowOrWebView) return (...a) =&gt; ipc.send(...a);
+
+  return (&apos;webContents&apos; in windowOrWebView) ?
+    (...a) =&gt; {
+      d(`webContents send: ${JSON.stringify(a)}`);
+      windowOrWebView.webContents.send(...a);
+    } :
+    (...a) =&gt; {
+      d(`webView send: ${JSON.stringify(a)}`);
+      windowOrWebView.send(...a);
+    };
+}
+
+/**
+ * This method creates an Observable Promise that represents a future response
+ * to a remoted call. It filters on ID, then cancels itself once either a
+ * response is returned, or it times out.
+ *
+ * @param  {BrowserWindow|WebView} windowOrWebView    A renderer process
+ * @param  {Guid} id                                  The ID of the sent request
+ * @param  {Number} timeout                           The timeout in milliseconds
+ *
+ * @return {Observable}                               An Observable Promise
+ *                                                    representing the result, or
+ *                                                    an OnError with the error.
+ *
+ * @private
+ */
+function listenerForId(windowOrWebView, id, timeout) {
+  return listenToIpc(responseChannel)
+    .do(([x]) =&gt; d(`Got IPC! ${x.id} === ${id}; ${JSON.stringify(x)}`))
+    .where(([receive]) =&gt; receive.id === id &amp;&amp; id)
+    .take(1)
+    .flatMap(([receive]) =&gt; {
+      if (receive.error) {
+        let e = new Error(receive.error.message);
+        e.stack = receive.error.stack;
+        return Observable.throw(e);
+      }
+
+      return Observable.return(receive.result);
+    })
+    .timeout(timeout);
+}
+
+
+/**
+ * Given the parentInfo returned from {getSenderIdentifier}, returns the actual
+ * BrowserWindow or WebContents that it represents.
+ *
+ * @param  {object} parentInfo            The renderer process identifying info.
+ *
+ * @return {BrowserWindow|WebContents}    An actual Renderer Process object.
+ *
+ * @private
+ */
+function findTargetFromParentInfo(parentInfo=window.parentInfo) {
+  if (!parentInfo) return null;
+  if (&apos;guestInstanceId&apos; in parentInfo) {
+    return require(&apos;remote&apos;).getGuestWebContents(parentInfo.guestInstanceId);
+  }
+
+  if (&apos;browserWindowId&apos; in parentInfo) {
+    return BrowserWindow.fromId(parentInfo.browserWindowId);
+  }
+
+  return null;
+}
+
+/**
+ * Configures a child renderer process who to send replies to. Call this method
+ * when you want child windows to be able to use their parent as an implicit
+ * target.
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to configure
+ */
+export function setParentInformation(windowOrWebView) {
+  let info = getSenderIdentifier();
+  let ret;
+
+  if (info.guestInstanceId) {
+    ret = remoteEval(windowOrWebView, `window.parentInfo = { guestInstanceId: ${info.guestInstanceId} }`);
+  } else if (info.browserWindowId) {
+    ret = remoteEval(windowOrWebView, `window.parentInfo = { browserWindowId: ${info.browserWindowId} }`);
+  } else {
+    ret = remoteEval(windowOrWebView, `window.parentInfo = {}`);
+  }
+
+  return ret.catch((err) =&gt; d(`Unable to set parentInfo: ${err.stack || err.message}`));
+}
+
+/**
+ * Evaluates a string `eval`-style in a remote renderer process.
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.
+ * @param  {string} str                             The code to execute.
+ * @param  {Number} timeout                         The timeout in milliseconds
+ *
+ * @return {Observable}                             The result of the evaluation.
+ *                                                  Must be JSON-serializable.
+ */
+export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
+  let send = getSendMethod(windowOrWebView || findTargetFromParentInfo());
+  if (!send) {
+    return Observable.throw(new Error(`Unable to find a target for: ${JSON.stringify(window.parentInfo)}`));
+  }
+
+  if (!str || str.length &lt; 1) {
+    return Observable.throw(new Error(&quot;RemoteEval called with empty or null code&quot;));
+  }
+
+  let toSend = Object.assign({ id: uuid.v4(), eval: str }, getSenderIdentifier());
+  let ret = listenerForId(windowOrWebView, toSend.id, timeout)
+    .catch((e) =&gt; {
+      if (e instanceof TimeoutError) {
+        return Observable.throw(new Error(`Timed out while running code: ${str}`));
+      } else {
+        return Observable.throw(e);
+      }
+    });
+
+  d(`Sending: ${JSON.stringify(toSend)}`);
+  send(requestChannel, toSend);
+  return ret;
+}
+
+/**
+ * Evaluates a string `eval`-style in a remote renderer process.
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.
+ * @param  {string} str                             The code to execute.
+ * @param  {Number} timeout                         The timeout in milliseconds
+ *
+ * @return {Promise}                             The result of the evaluation.
+ *                                               Must be JSON-serializable.
+ */
+export function remoteEval(windowOrWebView, str, timeout=5*1000) {
+  return remoteEvalObservable(windowOrWebView, str, timeout).toPromise();
+}
+
+/**
+ * Evaluates a JavaScript method on a remote object and returns the result. this
+ * method can be used to either execute Functions in remote renderers, or return
+ * values from objects. For example:
+ *
+ * let userAgent = await executeJavaScriptMethod(wnd, &apos;navigator.userAgent&apos;);
+ *
+ * executeJavaScriptMethod will also be smart enough to recognize when methods
+ * themselves return Promises and await them:
+ *
+ * let fetchResult = await executeJavaScriptMethod(&apos;window.fetchHtml&apos;, &apos;https://google.com&apos;);
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code
+ *                                                  in. If this parameter is
+ *                                                  null, this will reference
+ *                                                  the browser process.
+ * @param  {Number} timeout         Timeout in milliseconds
+ * @param  {string} pathToObject    A path to the object to execute, in dotted
+ *                                  form i.e. &apos;document.querySelector&apos;.
+ * @param  {Array} args             The arguments to pass to the method
+ *
+ * @return {Observable}                The result of evaluating the method or
+ *                                     property. Must be JSON serializable.
+ */
+export function executeJavaScriptMethodObservable(windowOrWebView, timeout, pathToObject, ...args) {
+  let send = getSendMethod(windowOrWebView || findTargetFromParentInfo());
+  if (!send) {
+    return Observable.throw(new Error(`Unable to find a target for: ${JSON.stringify(window.parentInfo)}`));
+  }
+
+  if (Array.isArray(pathToObject)) {
+    pathToObject = pathToObject.join(&apos;.&apos;);
+  }
+
+  if (!pathToObject.match(/^[a-zA-Z0-9\.]+$/)) {
+    return Observable.throw(new Error(&apos;pathToObject must be of the form foo.bar.baz&apos;));
+  }
+
+  let toSend = Object.assign({ args, id: uuid.v4(), path: pathToObject }, getSenderIdentifier());
+  let ret = listenerForId(windowOrWebView, toSend.id, timeout)
+    .catch((e) =&gt; {
+      if (e instanceof TimeoutError) {
+        return Observable.throw(new Error(`Timed out while running method: ${pathToObject}`));
+      } else {
+        return Observable.throw(e);
+      }
+    });
+
+  d(`Sending: ${JSON.stringify(toSend)}`);
+  send(requestChannel, toSend);
+  return ret;
+}
+
+
+/**
+ * Evaluates a JavaScript method on a remote object and returns the result. this
+ * method can be used to either execute Functions in remote renderers, or return
+ * values from objects. For example:
+ *
+ * let userAgent = await executeJavaScriptMethod(wnd, &apos;navigator.userAgent&apos;);
+ *
+ * executeJavaScriptMethod will also be smart enough to recognize when methods
+ * themselves return Promises and await them:
+ *
+ * let fetchResult = await executeJavaScriptMethod(&apos;window.fetchHtml&apos;, &apos;https://google.com&apos;);
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code
+ *                                                  in. If this parameter is
+ *                                                  null, this will reference
+ *                                                  the browser process.
+ * @param  {string} pathToObject    A path to the object to execute, in dotted
+ *                                  form i.e. &apos;document.querySelector&apos;.
+ * @param  {Array} args             The arguments to pass to the method
+ *
+ * @return {Promise}                The result of evaluating the method or
+ *                                  property. Must be JSON serializable.
+ */
+export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) {
+  return executeJavaScriptMethodObservable(windowOrWebView, 5*1000, pathToObject, ...args).toPromise();
+}
+
+/**
+ * Creates an object that is a representation of the remote process&apos;s &apos;window&apos;
+ * object that allows you to remotely invoke methods.
+ *
+ * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code
+ *                                                  in. If this parameter is
+ *                                                  null, this will reference
+ *                                                  the browser process.
+ *
+ * @return {Object}     A Proxy object that will invoke methods remotely.
+ *                      Similar to {executeJavaScriptMethod}, methods will return
+ *                      a Promise even if the target method returns a normal
+ *                      value.
+ */
+export function createProxyForRemote(windowOrWebView) {
+  return RecursiveProxyHandler.create(&apos;__removeme__&apos;, (methodChain, args) =&gt; {
+    let chain = methodChain.splice(1);
+
+    d(`Invoking ${chain.join(&apos;.&apos;)}(${JSON.stringify(args)})`);
+    return executeJavaScriptMethod(windowOrWebView, chain, ...args);
+  });
+}
+
+/**
+ * Walks the global object hierarchy to resolve the actual object that a dotted
+ * object path refers to.
+ *
+ * @param  {string} path  A path to the object to execute, in dotted
+ *                        form i.e. &apos;document.querySelector&apos;.
+ *
+ * @return {Array&lt;string&gt;}      Returns the actual method object and its parent,
+ *                              usually a Function and its `this` parameter, as
+ *                              `[parent, obj]`
+ *
+ * @private
+ */
+function objectAndParentGivenPath(path) {
+  let obj = global || window;
+  let parent = obj;
+
+  for (let part of path.split(&apos;.&apos;)) {
+    parent = obj;
+    obj = obj[part];
+  }
+
+  d(`parent: ${parent}, obj: ${obj}`);
+  if (typeof(parent) !== &apos;object&apos;) {
+    throw new Error(`Couldn&apos;t access part of the object window.${path}`);
+  }
+
+  return [parent, obj];
+}
+
+/**
+ * Given an object path and arguments, actually invokes the method  and returns
+ * the result. This method is run on the target side (i.e. not the one doing
+ * the invoking). This method tries to figure out the return value of an object
+ * and do the right thing, including awaiting Promises to get their values.
+ *
+ * @param  {string} path  A path to the object to execute, in dotted
+ *                        form i.e. &apos;document.querySelector&apos;.
+ * @param  {Array}  args  The arguments to pass to the method
+ *
+ * @return {Promise&lt;object&gt;}      The result of evaluating path(...args)
+ *
+ * @private
+ */
+async function evalRemoteMethod(path, args) {
+  let [parent, obj] = objectAndParentGivenPath(path);
+
+  let result = obj;
+  if (obj &amp;&amp; typeof(obj) === &apos;function&apos;) {
+    d(&quot;obj is function!&quot;);
+    let res = obj.apply(parent, args);
+
+    result = res;
+    if (typeof(res) === &apos;object&apos; &amp;&amp; res &amp;&amp; &apos;then&apos; in res) {
+      d(&quot;result is Promise!&quot;);
+      result = await res;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Initializes the IPC listener that {executeJavaScriptMethod} will send IPC
+ * messages to. You need to call this method in any process that you want to
+ * execute remote methods on.
+ *
+ * @return {Disposable}   An object that you can call `dispose` on to clean up
+ *                        the listener early. Usually not necessary.
+ */
+export function initializeEvalHandler() {
+  let listener = async function(e, receive) {
+    d(`Got Message! ${JSON.stringify(receive)}`);
+    let send = getReplyMethod(receive);
+
+    try {
+      if (receive.eval) {
+        receive.result = eval(receive.eval);
+      } else {
+        receive.result = await evalRemoteMethod(receive.path, receive.args);
+      }
+
+      d(`Replying! ${JSON.stringify(receive)} - ID is ${e.sender}`);
+      send(responseChannel, receive);
+    } catch(err) {
+      receive.error = {
+        message: err.message,
+        stack: err.stack
+      };
+
+      d(`Failed! ${JSON.stringify(receive)}`);
+      send(responseChannel, receive);
+    }
+  };
+
+  d(&quot;Set up listener!&quot;);
+  ipc.on(&apos;execute-javascript-request&apos;, listener);
+
+  return Disposable.create(() =&gt; ipc.removeListener(&apos;execute-javascript-request&apos;, listener));
+}
+
+/**
+ * RecursiveProxyHandler is a ES6 Proxy Handler object that intercepts method
+ * invocations and returns the full object that was invoked. So this means, if you
+ * get a proxy, then execute `foo.bar.bamf(5)`, you&apos;ll recieve a callback with
+ * the parameters &quot;foo.bar.bamf&quot; as a string, and [5].
+ */
+export class RecursiveProxyHandler {
+  /**
+   * Creates a new RecursiveProxyHandler. Don&apos;t use this, use `create`
+   *
+   * @private
+   */
+  constructor(name, methodHandler, parent=null, overrides=null) {
+    this.name = name;
+    this.proxies = {};
+    this.methodHandler = methodHandler;
+    this.parent = parent;
+    this.overrides = overrides;
+  }
+
+  /**
+   * Creates an ES6 Proxy which is handled by RecursiveProxyHandler.
+   *
+   * @param  {string} name             The root object name
+   * @param  {Function} methodHandler  The Function to handle method invocations -
+   *                                   this method will receive an Array&lt;String&gt; of
+   *                                   object names which will point to the Function
+   *                                   on the Proxy being invoked.
+   *
+   * @param  {Object} overrides        An optional object that lets you directly
+   *                                   include functions on the top-level object, its
+   *                                   keys are key names for the property, and
+   *                                   the values are what the key on the property
+   *                                   should return.
+   *
+   * @return {Proxy}                   An ES6 Proxy object that uses
+   *                                   RecursiveProxyHandler.
+   */
+  static create(name, methodHandler, overrides=null) {
+    return new Proxy({}, new RecursiveProxyHandler(name, methodHandler, null, overrides));
+  }
+
+  /**
+   * The {get} ES6 Proxy handler.
+   *
+   * @private
+   */
+  get(target, prop) {
+    if (this.overrides &amp;&amp; prop in this.overrides) {
+      return this.overrides[prop];
+    }
+
+    return new Proxy({}, this.getOrCreateProxyHandler(prop));
+  }
+
+  /**
+   * The {apply} ES6 Proxy handler.
+   *
+   * @private
+   */
+  apply(target, thisArg, argList) {
+    let methodChain = [this.replaceGetterWithName(this.name)];
+    let iter = this.parent;
+
+    while (iter) {
+      methodChain.unshift(iter.name);
+      iter = iter.parent;
+    }
+
+    return this.methodHandler(methodChain, argList);
+  }
+
+  /**
+   * Creates a proxy for a returned `get` call.
+   *
+   * @param  {string} name  The property name
+   * @return {RecursiveProxyHandler}
+   *
+   * @private
+   */
+  getOrCreateProxyHandler(name) {
+    let ret = this.proxies[name];
+    if (ret) return ret;
+
+    ret = new RecursiveProxyHandler(name, this.methodHandler, this);
+    this.proxies[name] = ret;
+    return ret;
+  }
+
+  /**
+   * Because we don&apos;t support directly getting values by-name, we convert any
+   * call of the form &quot;getXyz&quot; into a call for the value &apos;xyz&apos;
+   *
+   * @return {string} The name of the actual method or property to evaluate.
+   * @private
+   */
+  replaceGetterWithName(name) {
+    return name.replace(/_get$/, &apos;&apos;);
+  }
+}
+</code></pre>
+
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.6)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>

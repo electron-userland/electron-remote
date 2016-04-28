@@ -1,0 +1,23 @@
+{
+  "coverage": "70.58%",
+  "expectCount": 17,
+  "actualCount": 12,
+  "files": {
+    "src/execute-js-func.js": {
+      "expectCount": 15,
+      "actualCount": 10,
+      "undocumentLines": [
+        450,
+        448,
+        452,
+        451,
+        449
+      ]
+    },
+    "src/renderer-require.js": {
+      "expectCount": 2,
+      "actualCount": 2,
+      "undocumentLines": []
+    }
+  }
+}

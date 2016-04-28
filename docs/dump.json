@@ -1,0 +1,2462 @@
+[
+  {
+    "__docId__": 0,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/babel-maybefill.js",
+    "memberof": null,
+    "longname": "src/babel-maybefill.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "if (!('regeneratorRuntime' in global)) {\n  require('babel-polyfill');\n}\n"
+  },
+  {
+    "__docId__": 1,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/custom-operators.js",
+    "memberof": null,
+    "longname": "src/custom-operators.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import {Observable, Scheduler} from 'rx';\n\nconst newCoolOperators = {\n  guaranteedThrottle: function (time, scheduler=Scheduler.timeout) {\n    return this\n      .map((x) => Observable.timer(time, scheduler).map(() => x))\n      .switch();\n  }\n};\n\nfor (let key of Object.keys(newCoolOperators)) {\n  Observable.prototype[key] = newCoolOperators[key];\n}\n"
+  },
+  {
+    "__docId__": 2,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "newCoolOperators",
+    "memberof": "src/custom-operators.js",
+    "longname": "src/custom-operators.js~newCoolOperators",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/custom-operators.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 3,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 3,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/execute-js-func.js",
+    "memberof": null,
+    "longname": "src/execute-js-func.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import uuid from 'node-uuid';\nimport {Observable, Disposable, TimeoutError} from 'rx';\n\nconst requestChannel = 'execute-javascript-request';\nconst responseChannel = 'execute-javascript-response';\n\nlet isBrowser = (process.type === 'browser');\nlet ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];\n\nconst d = require(isBrowser ? 'debug' : 'debug/browser')('electron-remote:execute-js-func');\nconst BrowserWindow = isBrowser ?\n  require('electron').BrowserWindow :\n  require('remote').require('browser-window');\n\n/**\n * Determines the identifier for the current process (i.e. the thing we can use\n * to route messages to it)\n *\n * @return {object} An object with either a `guestInstanceId` or a `browserWindowId`\n */\nexport function getSenderIdentifier() {\n  if (isBrowser) return {};\n\n  if (process.guestInstanceId) {\n    return { guestInstanceId: process.guestInstanceId };\n  }\n\n  return {\n    browserWindowId: require('remote').getCurrentWindow().id\n  };\n}\n\n/**\n * Determines a way to send a reply back from an incoming eval request.\n *\n * @param  {Object} request   An object returned from {getSenderIdentifier}\n *\n * @return {Function}         A function that act like ipc.send, but to a\n *                            particular process.\n *\n * @private\n */\nfunction getReplyMethod(request) {\n  let target = findTargetFromParentInfo(request);\n\n  if (target) {\n    return (...a) => target.send(...a);\n  } else {\n    d(\"Using reply to main process\");\n    return (...a) => ipc.send(...a);\n  }\n}\n\n/**\n * Turns an IPC channel into an Observable\n *\n * @param  {String} channel     The IPC channel to listen to via `ipc.on`\n *\n * @return {Observable<Array>}  An Observable which sends IPC args via `onNext`\n *\n * @private\n */\nfunction listenToIpc(channel) {\n  return Observable.create((subj) => {\n    let listener = (event, ...args) => {\n      d(`Got an event for ${channel}: ${JSON.stringify(args)}`);\n      subj.onNext(args);\n    };\n\n    d(`Setting up listener! ${channel}`);\n    ipc.on(channel, listener);\n\n    return Disposable.create(() =>\n      ipc.removeListener(channel, listener));\n  });\n}\n\n/**\n * Returns a method that will act like `ipc.send` depending on the parameter\n * passed to it, so you don't have to check for `webContents`.\n *\n * @param  {BrowserWindow|WebView} windowOrWebView    The renderer to send to.\n *\n * @return {Function}                                 A function that behaves like\n *                                                    `ipc.send`.\n *\n * @private\n */\nfunction getSendMethod(windowOrWebView) {\n  if (!windowOrWebView) return (...a) => ipc.send(...a);\n\n  return ('webContents' in windowOrWebView) ?\n    (...a) => {\n      d(`webContents send: ${JSON.stringify(a)}`);\n      windowOrWebView.webContents.send(...a);\n    } :\n    (...a) => {\n      d(`webView send: ${JSON.stringify(a)}`);\n      windowOrWebView.send(...a);\n    };\n}\n\n/**\n * This method creates an Observable Promise that represents a future response\n * to a remoted call. It filters on ID, then cancels itself once either a\n * response is returned, or it times out.\n *\n * @param  {BrowserWindow|WebView} windowOrWebView    A renderer process\n * @param  {Guid} id                                  The ID of the sent request\n * @param  {Number} timeout                           The timeout in milliseconds\n *\n * @return {Observable}                               An Observable Promise\n *                                                    representing the result, or\n *                                                    an OnError with the error.\n *\n * @private\n */\nfunction listenerForId(windowOrWebView, id, timeout) {\n  return listenToIpc(responseChannel)\n    .do(([x]) => d(`Got IPC! ${x.id} === ${id}; ${JSON.stringify(x)}`))\n    .where(([receive]) => receive.id === id && id)\n    .take(1)\n    .flatMap(([receive]) => {\n      if (receive.error) {\n        let e = new Error(receive.error.message);\n        e.stack = receive.error.stack;\n        return Observable.throw(e);\n      }\n\n      return Observable.return(receive.result);\n    })\n    .timeout(timeout);\n}\n\n\n/**\n * Given the parentInfo returned from {getSenderIdentifier}, returns the actual\n * BrowserWindow or WebContents that it represents.\n *\n * @param  {object} parentInfo            The renderer process identifying info.\n *\n * @return {BrowserWindow|WebContents}    An actual Renderer Process object.\n *\n * @private\n */\nfunction findTargetFromParentInfo(parentInfo=window.parentInfo) {\n  if (!parentInfo) return null;\n  if ('guestInstanceId' in parentInfo) {\n    return require('remote').getGuestWebContents(parentInfo.guestInstanceId);\n  }\n\n  if ('browserWindowId' in parentInfo) {\n    return BrowserWindow.fromId(parentInfo.browserWindowId);\n  }\n\n  return null;\n}\n\n/**\n * Configures a child renderer process who to send replies to. Call this method\n * when you want child windows to be able to use their parent as an implicit\n * target.\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to configure\n */\nexport function setParentInformation(windowOrWebView) {\n  let info = getSenderIdentifier();\n  let ret;\n\n  if (info.guestInstanceId) {\n    ret = remoteEval(windowOrWebView, `window.parentInfo = { guestInstanceId: ${info.guestInstanceId} }`);\n  } else if (info.browserWindowId) {\n    ret = remoteEval(windowOrWebView, `window.parentInfo = { browserWindowId: ${info.browserWindowId} }`);\n  } else {\n    ret = remoteEval(windowOrWebView, `window.parentInfo = {}`);\n  }\n\n  return ret.catch((err) => d(`Unable to set parentInfo: ${err.stack || err.message}`));\n}\n\n/**\n * Evaluates a string `eval`-style in a remote renderer process.\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.\n * @param  {string} str                             The code to execute.\n * @param  {Number} timeout                         The timeout in milliseconds\n *\n * @return {Observable}                             The result of the evaluation.\n *                                                  Must be JSON-serializable.\n */\nexport function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {\n  let send = getSendMethod(windowOrWebView || findTargetFromParentInfo());\n  if (!send) {\n    return Observable.throw(new Error(`Unable to find a target for: ${JSON.stringify(window.parentInfo)}`));\n  }\n\n  if (!str || str.length < 1) {\n    return Observable.throw(new Error(\"RemoteEval called with empty or null code\"));\n  }\n\n  let toSend = Object.assign({ id: uuid.v4(), eval: str }, getSenderIdentifier());\n  let ret = listenerForId(windowOrWebView, toSend.id, timeout)\n    .catch((e) => {\n      if (e instanceof TimeoutError) {\n        return Observable.throw(new Error(`Timed out while running code: ${str}`));\n      } else {\n        return Observable.throw(e);\n      }\n    });\n\n  d(`Sending: ${JSON.stringify(toSend)}`);\n  send(requestChannel, toSend);\n  return ret;\n}\n\n/**\n * Evaluates a string `eval`-style in a remote renderer process.\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code in.\n * @param  {string} str                             The code to execute.\n * @param  {Number} timeout                         The timeout in milliseconds\n *\n * @return {Promise}                             The result of the evaluation.\n *                                               Must be JSON-serializable.\n */\nexport function remoteEval(windowOrWebView, str, timeout=5*1000) {\n  return remoteEvalObservable(windowOrWebView, str, timeout).toPromise();\n}\n\n/**\n * Evaluates a JavaScript method on a remote object and returns the result. this\n * method can be used to either execute Functions in remote renderers, or return\n * values from objects. For example:\n *\n * let userAgent = await executeJavaScriptMethod(wnd, 'navigator.userAgent');\n *\n * executeJavaScriptMethod will also be smart enough to recognize when methods\n * themselves return Promises and await them:\n *\n * let fetchResult = await executeJavaScriptMethod('window.fetchHtml', 'https://google.com');\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code\n *                                                  in. If this parameter is\n *                                                  null, this will reference\n *                                                  the browser process.\n * @param  {Number} timeout         Timeout in milliseconds\n * @param  {string} pathToObject    A path to the object to execute, in dotted\n *                                  form i.e. 'document.querySelector'.\n * @param  {Array} args             The arguments to pass to the method\n *\n * @return {Observable}                The result of evaluating the method or\n *                                     property. Must be JSON serializable.\n */\nexport function executeJavaScriptMethodObservable(windowOrWebView, timeout, pathToObject, ...args) {\n  let send = getSendMethod(windowOrWebView || findTargetFromParentInfo());\n  if (!send) {\n    return Observable.throw(new Error(`Unable to find a target for: ${JSON.stringify(window.parentInfo)}`));\n  }\n\n  if (Array.isArray(pathToObject)) {\n    pathToObject = pathToObject.join('.');\n  }\n\n  if (!pathToObject.match(/^[a-zA-Z0-9\\.]+$/)) {\n    return Observable.throw(new Error('pathToObject must be of the form foo.bar.baz'));\n  }\n\n  let toSend = Object.assign({ args, id: uuid.v4(), path: pathToObject }, getSenderIdentifier());\n  let ret = listenerForId(windowOrWebView, toSend.id, timeout)\n    .catch((e) => {\n      if (e instanceof TimeoutError) {\n        return Observable.throw(new Error(`Timed out while running method: ${pathToObject}`));\n      } else {\n        return Observable.throw(e);\n      }\n    });\n\n  d(`Sending: ${JSON.stringify(toSend)}`);\n  send(requestChannel, toSend);\n  return ret;\n}\n\n\n/**\n * Evaluates a JavaScript method on a remote object and returns the result. this\n * method can be used to either execute Functions in remote renderers, or return\n * values from objects. For example:\n *\n * let userAgent = await executeJavaScriptMethod(wnd, 'navigator.userAgent');\n *\n * executeJavaScriptMethod will also be smart enough to recognize when methods\n * themselves return Promises and await them:\n *\n * let fetchResult = await executeJavaScriptMethod('window.fetchHtml', 'https://google.com');\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code\n *                                                  in. If this parameter is\n *                                                  null, this will reference\n *                                                  the browser process.\n * @param  {string} pathToObject    A path to the object to execute, in dotted\n *                                  form i.e. 'document.querySelector'.\n * @param  {Array} args             The arguments to pass to the method\n *\n * @return {Promise}                The result of evaluating the method or\n *                                  property. Must be JSON serializable.\n */\nexport function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) {\n  return executeJavaScriptMethodObservable(windowOrWebView, 5*1000, pathToObject, ...args).toPromise();\n}\n\n/**\n * Creates an object that is a representation of the remote process's 'window'\n * object that allows you to remotely invoke methods.\n *\n * @param {BrowserWindow|WebView} windowOrWebView   The child to execute code\n *                                                  in. If this parameter is\n *                                                  null, this will reference\n *                                                  the browser process.\n *\n * @return {Object}     A Proxy object that will invoke methods remotely.\n *                      Similar to {executeJavaScriptMethod}, methods will return\n *                      a Promise even if the target method returns a normal\n *                      value.\n */\nexport function createProxyForRemote(windowOrWebView) {\n  return RecursiveProxyHandler.create('__removeme__', (methodChain, args) => {\n    let chain = methodChain.splice(1);\n\n    d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);\n    return executeJavaScriptMethod(windowOrWebView, chain, ...args);\n  });\n}\n\n/**\n * Walks the global object hierarchy to resolve the actual object that a dotted\n * object path refers to.\n *\n * @param  {string} path  A path to the object to execute, in dotted\n *                        form i.e. 'document.querySelector'.\n *\n * @return {Array<string>}      Returns the actual method object and its parent,\n *                              usually a Function and its `this` parameter, as\n *                              `[parent, obj]`\n *\n * @private\n */\nfunction objectAndParentGivenPath(path) {\n  let obj = global || window;\n  let parent = obj;\n\n  for (let part of path.split('.')) {\n    parent = obj;\n    obj = obj[part];\n  }\n\n  d(`parent: ${parent}, obj: ${obj}`);\n  if (typeof(parent) !== 'object') {\n    throw new Error(`Couldn't access part of the object window.${path}`);\n  }\n\n  return [parent, obj];\n}\n\n/**\n * Given an object path and arguments, actually invokes the method  and returns\n * the result. This method is run on the target side (i.e. not the one doing\n * the invoking). This method tries to figure out the return value of an object\n * and do the right thing, including awaiting Promises to get their values.\n *\n * @param  {string} path  A path to the object to execute, in dotted\n *                        form i.e. 'document.querySelector'.\n * @param  {Array}  args  The arguments to pass to the method\n *\n * @return {Promise<object>}      The result of evaluating path(...args)\n *\n * @private\n */\nasync function evalRemoteMethod(path, args) {\n  let [parent, obj] = objectAndParentGivenPath(path);\n\n  let result = obj;\n  if (obj && typeof(obj) === 'function') {\n    d(\"obj is function!\");\n    let res = obj.apply(parent, args);\n\n    result = res;\n    if (typeof(res) === 'object' && res && 'then' in res) {\n      d(\"result is Promise!\");\n      result = await res;\n    }\n  }\n\n  return result;\n}\n\n/**\n * Initializes the IPC listener that {executeJavaScriptMethod} will send IPC\n * messages to. You need to call this method in any process that you want to\n * execute remote methods on.\n *\n * @return {Disposable}   An object that you can call `dispose` on to clean up\n *                        the listener early. Usually not necessary.\n */\nexport function initializeEvalHandler() {\n  let listener = async function(e, receive) {\n    d(`Got Message! ${JSON.stringify(receive)}`);\n    let send = getReplyMethod(receive);\n\n    try {\n      if (receive.eval) {\n        receive.result = eval(receive.eval);\n      } else {\n        receive.result = await evalRemoteMethod(receive.path, receive.args);\n      }\n\n      d(`Replying! ${JSON.stringify(receive)} - ID is ${e.sender}`);\n      send(responseChannel, receive);\n    } catch(err) {\n      receive.error = {\n        message: err.message,\n        stack: err.stack\n      };\n\n      d(`Failed! ${JSON.stringify(receive)}`);\n      send(responseChannel, receive);\n    }\n  };\n\n  d(\"Set up listener!\");\n  ipc.on('execute-javascript-request', listener);\n\n  return Disposable.create(() => ipc.removeListener('execute-javascript-request', listener));\n}\n\n/**\n * RecursiveProxyHandler is a ES6 Proxy Handler object that intercepts method\n * invocations and returns the full object that was invoked. So this means, if you\n * get a proxy, then execute `foo.bar.bamf(5)`, you'll recieve a callback with\n * the parameters \"foo.bar.bamf\" as a string, and [5].\n */\nexport class RecursiveProxyHandler {\n  /**\n   * Creates a new RecursiveProxyHandler. Don't use this, use `create`\n   *\n   * @private\n   */\n  constructor(name, methodHandler, parent=null, overrides=null) {\n    this.name = name;\n    this.proxies = {};\n    this.methodHandler = methodHandler;\n    this.parent = parent;\n    this.overrides = overrides;\n  }\n\n  /**\n   * Creates an ES6 Proxy which is handled by RecursiveProxyHandler.\n   *\n   * @param  {string} name             The root object name\n   * @param  {Function} methodHandler  The Function to handle method invocations -\n   *                                   this method will receive an Array<String> of\n   *                                   object names which will point to the Function\n   *                                   on the Proxy being invoked.\n   *\n   * @param  {Object} overrides        An optional object that lets you directly\n   *                                   include functions on the top-level object, its\n   *                                   keys are key names for the property, and\n   *                                   the values are what the key on the property\n   *                                   should return.\n   *\n   * @return {Proxy}                   An ES6 Proxy object that uses\n   *                                   RecursiveProxyHandler.\n   */\n  static create(name, methodHandler, overrides=null) {\n    return new Proxy({}, new RecursiveProxyHandler(name, methodHandler, null, overrides));\n  }\n\n  /**\n   * The {get} ES6 Proxy handler.\n   *\n   * @private\n   */\n  get(target, prop) {\n    if (this.overrides && prop in this.overrides) {\n      return this.overrides[prop];\n    }\n\n    return new Proxy({}, this.getOrCreateProxyHandler(prop));\n  }\n\n  /**\n   * The {apply} ES6 Proxy handler.\n   *\n   * @private\n   */\n  apply(target, thisArg, argList) {\n    let methodChain = [this.replaceGetterWithName(this.name)];\n    let iter = this.parent;\n\n    while (iter) {\n      methodChain.unshift(iter.name);\n      iter = iter.parent;\n    }\n\n    return this.methodHandler(methodChain, argList);\n  }\n\n  /**\n   * Creates a proxy for a returned `get` call.\n   *\n   * @param  {string} name  The property name\n   * @return {RecursiveProxyHandler}\n   *\n   * @private\n   */\n  getOrCreateProxyHandler(name) {\n    let ret = this.proxies[name];\n    if (ret) return ret;\n\n    ret = new RecursiveProxyHandler(name, this.methodHandler, this);\n    this.proxies[name] = ret;\n    return ret;\n  }\n\n  /**\n   * Because we don't support directly getting values by-name, we convert any\n   * call of the form \"getXyz\" into a call for the value 'xyz'\n   *\n   * @return {string} The name of the actual method or property to evaluate.\n   * @private\n   */\n  replaceGetterWithName(name) {\n    return name.replace(/_get$/, '');\n  }\n}\n"
+  },
+  {
+    "__docId__": 4,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "requestChannel",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~requestChannel",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 4,
+    "undocument": true,
+    "type": {
+      "types": [
+        "string"
+      ]
+    }
+  },
+  {
+    "__docId__": 5,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "responseChannel",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~responseChannel",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 5,
+    "undocument": true,
+    "type": {
+      "types": [
+        "string"
+      ]
+    }
+  },
+  {
+    "__docId__": 6,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "isBrowser",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~isBrowser",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 7,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 7,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "ipc",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~ipc",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 8,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 8,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "d",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~d",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 10,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 9,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "BrowserWindow",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~BrowserWindow",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 11,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 10,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "getSenderIdentifier",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~getSenderIdentifier",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{getSenderIdentifier}",
+    "description": "Determines the identifier for the current process (i.e. the thing we can use\nto route messages to it)",
+    "lineNumber": 21,
+    "params": [],
+    "return": {
+      "nullable": null,
+      "types": [
+        "object"
+      ],
+      "spread": false,
+      "description": "An object with either a `guestInstanceId` or a `browserWindowId`"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 11,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "getReplyMethod",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~getReplyMethod",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Determines a way to send a reply back from an incoming eval request.",
+    "lineNumber": 43,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "Object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "request",
+        "description": "An object returned from {getSenderIdentifier}"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Function"
+      ],
+      "spread": false,
+      "description": "A function that act like ipc.send, but to a\n                           particular process."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 12,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "listenToIpc",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~listenToIpc",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Turns an IPC channel into an Observable",
+    "lineNumber": 63,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "String"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "channel",
+        "description": "The IPC channel to listen to via `ipc.on`"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Observable<Array>"
+      ],
+      "spread": false,
+      "description": "An Observable which sends IPC args via `onNext`"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 13,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "getSendMethod",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~getSendMethod",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Returns a method that will act like `ipc.send` depending on the parameter\npassed to it, so you don't have to check for `webContents`.",
+    "lineNumber": 89,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The renderer to send to."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Function"
+      ],
+      "spread": false,
+      "description": "A function that behaves like\n                                                   `ipc.send`."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 14,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "listenerForId",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~listenerForId",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "This method creates an Observable Promise that represents a future response\nto a remoted call. It filters on ID, then cancels itself once either a\nresponse is returned, or it times out.",
+    "lineNumber": 118,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "A renderer process"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Guid"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "id",
+        "description": "The ID of the sent request"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "timeout",
+        "description": "The timeout in milliseconds"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Observable"
+      ],
+      "spread": false,
+      "description": "An Observable Promise\n                                                   representing the result, or\n                                                   an OnError with the error."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 15,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "findTargetFromParentInfo",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~findTargetFromParentInfo",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Given the parentInfo returned from {getSenderIdentifier}, returns the actual\nBrowserWindow or WebContents that it represents.",
+    "lineNumber": 146,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "parentInfo",
+        "description": "The renderer process identifying info."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "BrowserWindow",
+        "WebContents"
+      ],
+      "spread": false,
+      "description": "An actual Renderer Process object."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 16,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "setParentInformation",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~setParentInformation",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{setParentInformation}",
+    "description": "Configures a child renderer process who to send replies to. Call this method\nwhen you want child windows to be able to use their parent as an implicit\ntarget.",
+    "lineNumber": 166,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to configure"
+      }
+    ],
+    "return": {
+      "types": [
+        "*"
+      ]
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 17,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "remoteEvalObservable",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~remoteEvalObservable",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{remoteEvalObservable}",
+    "description": "Evaluates a string `eval`-style in a remote renderer process.",
+    "lineNumber": 191,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to execute code in."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "str",
+        "description": "The code to execute."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "timeout",
+        "description": "The timeout in milliseconds"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Observable"
+      ],
+      "spread": false,
+      "description": "The result of the evaluation.\n                                                 Must be JSON-serializable."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 18,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "remoteEval",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~remoteEval",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{remoteEval}",
+    "description": "Evaluates a string `eval`-style in a remote renderer process.",
+    "lineNumber": 226,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to execute code in."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "str",
+        "description": "The code to execute."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "timeout",
+        "description": "The timeout in milliseconds"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Promise"
+      ],
+      "spread": false,
+      "description": "The result of the evaluation.\n                                              Must be JSON-serializable."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 19,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "executeJavaScriptMethodObservable",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~executeJavaScriptMethodObservable",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{executeJavaScriptMethodObservable}",
+    "description": "Evaluates a JavaScript method on a remote object and returns the result. this\nmethod can be used to either execute Functions in remote renderers, or return\nvalues from objects. For example:\n\nlet userAgent = await executeJavaScriptMethod(wnd, 'navigator.userAgent');\n\nexecuteJavaScriptMethod will also be smart enough to recognize when methods\nthemselves return Promises and await them:\n\nlet fetchResult = await executeJavaScriptMethod('window.fetchHtml', 'https://google.com');",
+    "lineNumber": 254,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to execute code\n                                                 in. If this parameter is\n                                                 null, this will reference\n                                                 the browser process."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "timeout",
+        "description": "Timeout in milliseconds"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "pathToObject",
+        "description": "A path to the object to execute, in dotted\n                                 form i.e. 'document.querySelector'."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Array"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to pass to the method"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Observable"
+      ],
+      "spread": false,
+      "description": "The result of evaluating the method or\n                                    property. Must be JSON serializable."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 20,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "executeJavaScriptMethod",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~executeJavaScriptMethod",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{executeJavaScriptMethod}",
+    "description": "Evaluates a JavaScript method on a remote object and returns the result. this\nmethod can be used to either execute Functions in remote renderers, or return\nvalues from objects. For example:\n\nlet userAgent = await executeJavaScriptMethod(wnd, 'navigator.userAgent');\n\nexecuteJavaScriptMethod will also be smart enough to recognize when methods\nthemselves return Promises and await them:\n\nlet fetchResult = await executeJavaScriptMethod('window.fetchHtml', 'https://google.com');",
+    "lineNumber": 307,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to execute code\n                                                 in. If this parameter is\n                                                 null, this will reference\n                                                 the browser process."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "pathToObject",
+        "description": "A path to the object to execute, in dotted\n                                 form i.e. 'document.querySelector'."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Array"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to pass to the method"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Promise"
+      ],
+      "spread": false,
+      "description": "The result of evaluating the method or\n                                 property. Must be JSON serializable."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 21,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "createProxyForRemote",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~createProxyForRemote",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{createProxyForRemote}",
+    "description": "Creates an object that is a representation of the remote process's 'window'\nobject that allows you to remotely invoke methods.",
+    "lineNumber": 325,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "BrowserWindow",
+          "WebView"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "windowOrWebView",
+        "description": "The child to execute code\n                                                 in. If this parameter is\n                                                 null, this will reference\n                                                 the browser process."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Object"
+      ],
+      "spread": false,
+      "description": "A Proxy object that will invoke methods remotely.\n                     Similar to {executeJavaScriptMethod}, methods will return\n                     a Promise even if the target method returns a normal\n                     value."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 22,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "objectAndParentGivenPath",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~objectAndParentGivenPath",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Walks the global object hierarchy to resolve the actual object that a dotted\nobject path refers to.",
+    "lineNumber": 347,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "path",
+        "description": "A path to the object to execute, in dotted\n                       form i.e. 'document.querySelector'."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Array<string>"
+      ],
+      "spread": false,
+      "description": "Returns the actual method object and its parent,\n                             usually a Function and its `this` parameter, as\n                             `[parent, obj]`"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 23,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "evalRemoteMethod",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~evalRemoteMethod",
+    "access": "private",
+    "export": false,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": null,
+    "description": "Given an object path and arguments, actually invokes the method  and returns\nthe result. This method is run on the target side (i.e. not the one doing\nthe invoking). This method tries to figure out the return value of an object\nand do the right thing, including awaiting Promises to get their values.",
+    "lineNumber": 378,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "path",
+        "description": "A path to the object to execute, in dotted\n                       form i.e. 'document.querySelector'."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Array"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "args",
+        "description": "The arguments to pass to the method"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Promise<object>"
+      ],
+      "spread": false,
+      "description": "The result of evaluating path(...args)"
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 24,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "initializeEvalHandler",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~initializeEvalHandler",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{initializeEvalHandler}",
+    "description": "Initializes the IPC listener that {executeJavaScriptMethod} will send IPC\nmessages to. You need to call this method in any process that you want to\nexecute remote methods on.",
+    "lineNumber": 404,
+    "params": [],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Disposable"
+      ],
+      "spread": false,
+      "description": "An object that you can call `dispose` on to clean up\n                       the listener early. Usually not necessary."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 25,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "RecursiveProxyHandler",
+    "memberof": "src/execute-js-func.js",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/execute-js-func.js",
+    "importStyle": "{RecursiveProxyHandler}",
+    "description": "RecursiveProxyHandler is a ES6 Proxy Handler object that intercepts method\ninvocations and returns the full object that was invoked. So this means, if you\nget a proxy, then execute `foo.bar.bamf(5)`, you'll recieve a callback with\nthe parameters \"foo.bar.bamf\" as a string, and [5].",
+    "lineNumber": 441,
+    "interface": false
+  },
+  {
+    "__docId__": 26,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#constructor",
+    "access": "private",
+    "description": "Creates a new RecursiveProxyHandler. Don't use this, use `create`",
+    "lineNumber": 447,
+    "params": [
+      {
+        "name": "name",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "methodHandler",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "parent",
+        "optional": true,
+        "types": [
+          "*"
+        ],
+        "defaultRaw": null,
+        "defaultValue": "null"
+      },
+      {
+        "name": "overrides",
+        "optional": true,
+        "types": [
+          "*"
+        ],
+        "defaultRaw": null,
+        "defaultValue": "null"
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 27,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "name",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#name",
+    "access": null,
+    "description": null,
+    "lineNumber": 448,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 28,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "proxies",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#proxies",
+    "access": null,
+    "description": null,
+    "lineNumber": 449,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 29,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "methodHandler",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#methodHandler",
+    "access": null,
+    "description": null,
+    "lineNumber": 450,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 30,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "parent",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#parent",
+    "access": null,
+    "description": null,
+    "lineNumber": 451,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 31,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "overrides",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#overrides",
+    "access": null,
+    "description": null,
+    "lineNumber": 452,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 32,
+    "kind": "method",
+    "static": true,
+    "variation": null,
+    "name": "create",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler.create",
+    "access": null,
+    "description": "Creates an ES6 Proxy which is handled by RecursiveProxyHandler.",
+    "lineNumber": 473,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "name",
+        "description": "The root object name"
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Function"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "methodHandler",
+        "description": "The Function to handle method invocations -\n                                  this method will receive an Array<String> of\n                                  object names which will point to the Function\n                                  on the Proxy being invoked."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Object"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "overrides",
+        "description": "An optional object that lets you directly\n                                  include functions on the top-level object, its\n                                  keys are key names for the property, and\n                                  the values are what the key on the property\n                                  should return."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Proxy"
+      ],
+      "spread": false,
+      "description": "An ES6 Proxy object that uses\n                                  RecursiveProxyHandler."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 33,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "get",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#get",
+    "access": "private",
+    "description": "The {get} ES6 Proxy handler.",
+    "lineNumber": 482,
+    "params": [
+      {
+        "name": "target",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "prop",
+        "types": [
+          "*"
+        ]
+      }
+    ],
+    "return": {
+      "types": [
+        "*"
+      ]
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 34,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "apply",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#apply",
+    "access": "private",
+    "description": "The {apply} ES6 Proxy handler.",
+    "lineNumber": 495,
+    "params": [
+      {
+        "name": "target",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "thisArg",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "argList",
+        "types": [
+          "*"
+        ]
+      }
+    ],
+    "return": {
+      "types": [
+        "*"
+      ]
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 35,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "getOrCreateProxyHandler",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#getOrCreateProxyHandler",
+    "access": "private",
+    "description": "Creates a proxy for a returned `get` call.",
+    "lineNumber": 515,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "name",
+        "description": "The property name"
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "RecursiveProxyHandler"
+      ],
+      "spread": false,
+      "description": ""
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 36,
+    "kind": "method",
+    "static": false,
+    "variation": null,
+    "name": "replaceGetterWithName",
+    "memberof": "src/execute-js-func.js~RecursiveProxyHandler",
+    "longname": "src/execute-js-func.js~RecursiveProxyHandler#replaceGetterWithName",
+    "access": "private",
+    "description": "Because we don't support directly getting values by-name, we convert any\ncall of the form \"getXyz\" into a call for the value 'xyz'",
+    "lineNumber": 531,
+    "params": [
+      {
+        "name": "name",
+        "types": [
+          "*"
+        ]
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "string"
+      ],
+      "spread": false,
+      "description": "The name of the actual method or property to evaluate."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 37,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/index.js",
+    "memberof": null,
+    "longname": "src/index.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import * as executeJsFunc from './execute-js-func';\nimport * as rendererRequire from './renderer-require';\n\nconst executeJsFuncExports = [\n  'createProxyForRemote',\n  'getSenderIdentifier', \n  'executeJavaScriptMethodObservable',\n  'executeJavaScriptMethod',\n  'initializeEvalHandler',\n  'remoteEvalObservable', \n  'remoteEval',\n  'setParentInformation', \n  'RecursiveProxyHandler'\n];\n\nmodule.exports = Object.assign(\n  executeJsFuncExports.reduce((acc, x) => { acc[x] = executeJsFunc[x]; return acc; }, {}),\n  rendererRequire\n);\n"
+  },
+  {
+    "__docId__": 38,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "executeJsFuncExports",
+    "memberof": "src/index.js",
+    "longname": "src/index.js~executeJsFuncExports",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/index.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 4,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 39,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/remote-ajax.js",
+    "memberof": null,
+    "longname": "src/remote-ajax.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import rx from 'rx-dom';\nimport promisify from 'pify';\n\nconst toInclude = ['ajax', 'get', 'getJSON', 'post'];\nconst fs = promisify(require('fs'));\n\nif (!('type' in process)) {\n  global.XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest;\n}\n\nmodule.exports = toInclude.reduce((acc, k) => {\n  acc[k] = (...args) => {\n    let stall = Promise.resolve(true);\n    if (!root.window || !root.window.document) {\n      stall = new Promise((res) => setTimeout(res, 100));\n    }\n\n    return stall.then(() => rx.DOM[k](...args).toPromise());\n  };\n\n  return acc;\n}, {});\n\nlet isHttpUrl = (pathOrUrl) => pathOrUrl.match(/^https?:\\/\\//i);\n\n/**\n * Fetches a path as either a file path or a HTTP URL.\n *\n * @param  {string} pathOrUrl   Either an HTTP URL or a file path.\n * @return {string}             The contents as a UTF-8 decoded string.\n */\nmodule.exports.fetchFileOrUrl = async function(pathOrUrl) {\n  if (!isHttpUrl(pathOrUrl)) {\n    return await fs.readFile(pathOrUrl, 'utf8');\n  }\n\n  let ret = await module.exports.get(pathOrUrl);\n  return ret.response;\n};\n\n/**\n * Downloads a path as either a file path or a HTTP URL to a specific place\n *\n * @param  {string} pathOrUrl   Either an HTTP URL or a file path.\n * @return {string}             The contents as a UTF-8 decoded string.\n */\nmodule.exports.downloadFileOrUrl = async function(pathOrUrl, target) {\n  if (!isHttpUrl(pathOrUrl)) {\n    try {\n      let buf = await fs.readFile(pathOrUrl);\n      await fs.writeFile(target, buf);\n\n      return buf.length;\n    } catch (e) {\n      return rx.Observable.throw(e);\n    }\n  }\n\n  let response = await window.fetch(pathOrUrl, {\n    method: 'GET',\n    cache: 'no-store',\n    redirect: 'follow',\n  });\n\n  let fd = await fs.open(target, 'w');\n  let length = 0;\n  try {\n    let reader = await response.body.getReader();\n    let chunk = await reader.read();\n\n    while (!chunk.done) {\n      let buf = new Buffer(new Uint8Array(chunk.value));\n      await fs.write(fd, buf, 0, buf.length);\n      length += buf.length;\n\n      chunk = await reader.read();\n    }\n\n    // Write out the last chunk\n    if (chunk.value && chunk.value.length > 0) {\n      let buf = new Buffer(new Uint8Array(chunk.value));\n      await fs.write(fd, buf, 0, buf.length);\n      length += buf.length;\n    }\n  } finally {\n    await fs.close(fd);\n  }\n\n  return length;\n};\n"
+  },
+  {
+    "__docId__": 40,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "toInclude",
+    "memberof": "src/remote-ajax.js",
+    "longname": "src/remote-ajax.js~toInclude",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/remote-ajax.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 4,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 41,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "fs",
+    "memberof": "src/remote-ajax.js",
+    "longname": "src/remote-ajax.js~fs",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/remote-ajax.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 5,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 42,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "isHttpUrl",
+    "memberof": "src/remote-ajax.js",
+    "longname": "src/remote-ajax.js~isHttpUrl",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/remote-ajax.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 24,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 43,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "fetchFileOrUrl",
+    "memberof": "src/remote-ajax.js",
+    "longname": "src/remote-ajax.js~fetchFileOrUrl",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/remote-ajax.js",
+    "importStyle": null,
+    "description": "Fetches a path as either a file path or a HTTP URL.",
+    "lineNumber": 32,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "pathOrUrl",
+        "description": "Either an HTTP URL or a file path."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "string"
+      ],
+      "spread": false,
+      "description": "The contents as a UTF-8 decoded string."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 44,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "downloadFileOrUrl",
+    "memberof": "src/remote-ajax.js",
+    "longname": "src/remote-ajax.js~downloadFileOrUrl",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/remote-ajax.js",
+    "importStyle": null,
+    "description": "Downloads a path as either a file path or a HTTP URL to a specific place",
+    "lineNumber": 47,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "pathOrUrl",
+        "description": "Either an HTTP URL or a file path."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "string"
+      ],
+      "spread": false,
+      "description": "The contents as a UTF-8 decoded string."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 45,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/renderer-require-preload.js",
+    "memberof": null,
+    "longname": "src/renderer-require-preload.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import {initializeEvalHandler} from './execute-js-func';\nimport url from 'url';\n\ninitializeEvalHandler();\n\nurl.parse(window.location.href);\nlet escapedModule = url.parse(window.location.href).query.split('=')[1];\ntry {\n  window.requiredModule = require(decodeURIComponent(escapedModule));\n} catch (e) {\n  window.moduleLoadFailure = e;\n}\n"
+  },
+  {
+    "__docId__": 46,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "escapedModule",
+    "memberof": "src/renderer-require-preload.js",
+    "longname": "src/renderer-require-preload.js~escapedModule",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/renderer-require-preload.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 7,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 47,
+    "kind": "file",
+    "static": true,
+    "variation": null,
+    "name": "src/renderer-require.js",
+    "memberof": null,
+    "longname": "src/renderer-require.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import path from 'path';\nimport {AsyncSubject, Observable, Subject} from 'rx';\n\nimport {createProxyForRemote, executeJavaScriptMethod, executeJavaScriptMethodObservable, RecursiveProxyHandler} from './execute-js-func';\n\nimport './custom-operators';\n\nconst d = require('debug')('electron-remote:renderer-require');\n\nconst BrowserWindow = process.type === 'renderer' ?\n  require('remote').BrowserWindow :\n  require('electron').BrowserWindow;\n\n/**\n * Creates a BrowserWindow, requires a module in it, then returns a Proxy\n * object that will call into it. You probably want to use {requireTaskPool}\n * instead.\n *\n * @param  {string} modulePath  The path of the module to include.\n *\n * @return {Object}             Returns an Object with a `module` which is a Proxy\n *                              object, and a `dispose` method that will clean up\n *                              the window.\n */\nexport async function rendererRequireDirect(modulePath) {\n  let bw = new BrowserWindow({width: 500, height: 500, show: false});\n  let fullPath = require.resolve(modulePath);\n\n  let ready = new Promise((res,rej) => {\n    bw.webContents.once('did-finish-load', () => res(true));\n    bw.webContents.once('did-fail-load', (ev, errCode, errMsg) => rej(new Error(errMsg)));\n  });\n\n  /* Uncomment for debugging!\n  bw.show();\n  bw.openDevTools();\n  */\n\n  let preloadFile = path.join(__dirname, 'renderer-require-preload.html');\n  bw.loadURL(`file:///${preloadFile}?module=${encodeURIComponent(fullPath)}`);\n  await ready;\n\n  let fail = await executeJavaScriptMethod(bw, 'window.moduleLoadFailure');\n  if (fail) {\n    let msg = await executeJavaScriptMethod(bw, 'window.moduleLoadFailure.message');\n    throw new Error(msg);\n  }\n\n  return {\n    module: createProxyForRemote(bw).requiredModule,\n    executeJavaScriptMethod: (chain, ...args) => executeJavaScriptMethod(bw, chain, ...args),\n    executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),\n    dispose: () => bw.close()\n  };\n}\n\n/**\n * requires a module in BrowserWindows that are created/destroyed as-needed, and\n * returns a Proxy object that will secretly marshal invocations to other processes\n * and marshal back the result. This is the cool method in this library.\n *\n * Note that since the global context is created / destroyed, you *cannot* rely\n * on module state (i.e. global variables) to be consistent\n *\n * @param  {string} modulePath       The path to the module. You may have to\n *                                   `require.resolve` it.\n * @param  {Number} maxConcurrency   The maximum number of concurrent processes\n *                                   to run. Defaults to 4.\n *\n * @return {Proxy}                   An ES6 Proxy object representing the module.\n */\nexport function requireTaskPool(modulePath, maxConcurrency=4) {\n  return new RendererTaskpoolItem(modulePath, maxConcurrency).moduleProxy;\n}\n\n/**\n * This class implements the scheduling logic for queuing and dispatching method\n * invocations to various background windows. It is complicated. But in like,\n * a cool way.\n */\nclass RendererTaskpoolItem {\n  constructor(modulePath, maxConcurrency) {\n    const freeWindowList = [];\n    const invocationQueue = new Subject();\n    const completionQueue = new Subject();\n\n    // This method will find a window that is currently idle or if it doesn't\n    // exist, create one.\n    const getOrCreateWindow = () => {\n      let item = freeWindowList.pop();\n      if (item) return Observable.return(item);\n\n      return Observable.fromPromise(rendererRequireDirect(modulePath));\n    };\n\n    // Here, we set up a pipeline that maps a stream of invocations (i.e.\n    // something we can pass to executeJavaScriptMethod) => stream of Future\n    // Results from various windows => Stream of completed results, for which we\n    // throw the Window that completed the result back onto the free window stack.\n    invocationQueue\n      .map(({chain, args, retval}) => Observable.defer(() => {\n        return getOrCreateWindow()\n          .flatMap((wnd) => {\n            d(`Actually invoking ${chain.join('.')}(${JSON.stringify(args)})`);\n            let ret = wnd.executeJavaScriptMethodObservable(chain, ...args);\n\n            ret.multicast(retval).connect();\n            return ret.map(() => wnd).catch(Observable.return(wnd));\n          });\n      }))\n      .merge(maxConcurrency)\n      .subscribe((wnd) => {\n        if (!wnd || !wnd.dispose) throw new Error(\"Bogus!\");\n        freeWindowList.push(wnd);\n        completionQueue.onNext(true);\n      });\n\n    // Here, we create a version of RecursiveProxyHandler that will turn method\n    // invocations into something we can push onto our invocationQueue pipeline.\n    // This is the object that ends up being returned to the caller of\n    // requireTaskPool.\n    this.moduleProxy = RecursiveProxyHandler.create('__removeme__', (methodChain, args) => {\n      let chain = methodChain.splice(1);\n\n      d(`Queuing ${chain.join('.')}(${JSON.stringify(args)})`);\n      let retval = new AsyncSubject();\n\n      invocationQueue.onNext({ chain: ['requiredModule'].concat(chain), args, retval });\n      return retval.toPromise();\n    });\n\n    // If we haven't received any invocations within a certain idle timeout\n    // period, burn all of our BrowserWindow instances\n    completionQueue.guaranteedThrottle(5*1000).subscribe(() => {\n      d(`Freeing ${freeWindowList.length} taskpool processes`);\n      while (freeWindowList.length > 0) {\n        let wnd = freeWindowList.pop();\n        if (wnd) wnd.dispose();\n      }\n    });\n  }\n}\n"
+  },
+  {
+    "__docId__": 48,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "d",
+    "memberof": "src/renderer-require.js",
+    "longname": "src/renderer-require.js~d",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/renderer-require.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 8,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 49,
+    "kind": "variable",
+    "static": true,
+    "variation": null,
+    "name": "BrowserWindow",
+    "memberof": "src/renderer-require.js",
+    "longname": "src/renderer-require.js~BrowserWindow",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/renderer-require.js",
+    "importStyle": null,
+    "description": null,
+    "lineNumber": 10,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 50,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "rendererRequireDirect",
+    "memberof": "src/renderer-require.js",
+    "longname": "src/renderer-require.js~rendererRequireDirect",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/renderer-require.js",
+    "importStyle": "{rendererRequireDirect}",
+    "description": "Creates a BrowserWindow, requires a module in it, then returns a Proxy\nobject that will call into it. You probably want to use {requireTaskPool}\ninstead.",
+    "lineNumber": 25,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "modulePath",
+        "description": "The path of the module to include."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Object"
+      ],
+      "spread": false,
+      "description": "Returns an Object with a `module` which is a Proxy\n                             object, and a `dispose` method that will clean up\n                             the window."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 51,
+    "kind": "function",
+    "static": true,
+    "variation": null,
+    "name": "requireTaskPool",
+    "memberof": "src/renderer-require.js",
+    "longname": "src/renderer-require.js~requireTaskPool",
+    "access": null,
+    "export": true,
+    "importPath": "electron-remote/src/renderer-require.js",
+    "importStyle": "{requireTaskPool}",
+    "description": "requires a module in BrowserWindows that are created/destroyed as-needed, and\nreturns a Proxy object that will secretly marshal invocations to other processes\nand marshal back the result. This is the cool method in this library.\n\nNote that since the global context is created / destroyed, you *cannot* rely\non module state (i.e. global variables) to be consistent",
+    "lineNumber": 72,
+    "params": [
+      {
+        "nullable": null,
+        "types": [
+          "string"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "modulePath",
+        "description": "The path to the module. You may have to\n                                  `require.resolve` it."
+      },
+      {
+        "nullable": null,
+        "types": [
+          "Number"
+        ],
+        "spread": false,
+        "optional": false,
+        "name": "maxConcurrency",
+        "description": "The maximum number of concurrent processes\n                                  to run. Defaults to 4."
+      }
+    ],
+    "return": {
+      "nullable": null,
+      "types": [
+        "Proxy"
+      ],
+      "spread": false,
+      "description": "An ES6 Proxy object representing the module."
+    },
+    "generator": false
+  },
+  {
+    "__docId__": 52,
+    "kind": "class",
+    "static": true,
+    "variation": null,
+    "name": "RendererTaskpoolItem",
+    "memberof": "src/renderer-require.js",
+    "longname": "src/renderer-require.js~RendererTaskpoolItem",
+    "access": null,
+    "export": false,
+    "importPath": "electron-remote/src/renderer-require.js",
+    "importStyle": null,
+    "description": "This class implements the scheduling logic for queuing and dispatching method\ninvocations to various background windows. It is complicated. But in like,\na cool way.",
+    "lineNumber": 81,
+    "interface": false
+  },
+  {
+    "__docId__": 53,
+    "kind": "constructor",
+    "static": false,
+    "variation": null,
+    "name": "constructor",
+    "memberof": "src/renderer-require.js~RendererTaskpoolItem",
+    "longname": "src/renderer-require.js~RendererTaskpoolItem#constructor",
+    "access": null,
+    "description": null,
+    "lineNumber": 82,
+    "undocument": true,
+    "params": [
+      {
+        "name": "modulePath",
+        "types": [
+          "*"
+        ]
+      },
+      {
+        "name": "maxConcurrency",
+        "types": [
+          "*"
+        ]
+      }
+    ],
+    "generator": false
+  },
+  {
+    "__docId__": 54,
+    "kind": "member",
+    "static": false,
+    "variation": null,
+    "name": "moduleProxy",
+    "memberof": "src/renderer-require.js~RendererTaskpoolItem",
+    "longname": "src/renderer-require.js~RendererTaskpoolItem#moduleProxy",
+    "access": null,
+    "description": null,
+    "lineNumber": 122,
+    "undocument": true,
+    "type": {
+      "types": [
+        "*"
+      ]
+    }
+  },
+  {
+    "__docId__": 56,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Infinity",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Infinity",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Infinity",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 57,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NaN",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/NaN",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~NaN",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 58,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "undefined",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/undefined",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~undefined",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 59,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "null",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/null",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~null",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 60,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 61,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "object",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~object",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 62,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 63,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "function",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~function",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 64,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 65,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "boolean",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Boolean",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~boolean",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 66,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Symbol",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Symbol",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 67,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Error",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Error",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 68,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "EvalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/EvalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~EvalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 69,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "InternalError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/InternalError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~InternalError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 70,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RangeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RangeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RangeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 71,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ReferenceError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ReferenceError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ReferenceError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 72,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "SyntaxError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SyntaxError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~SyntaxError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 73,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "TypeError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~TypeError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 74,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "URIError",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/URIError",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~URIError",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 75,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 76,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "number",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~number",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 77,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Date",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Date",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 78,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "String",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~String",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 79,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "string",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~string",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 80,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "RegExp",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~RegExp",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 81,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 82,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 83,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 84,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint8ClampedArray",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint8ClampedArray",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 85,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 86,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint16Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint16Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint16Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 87,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Int32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Int32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 88,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Uint32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Uint32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 89,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float32Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float32Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 90,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Float64Array",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float64Array",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Float64Array",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 91,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Map",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Map",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 92,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Set",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Set",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 93,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakMap",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakMap",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 94,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "WeakSet",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakSet",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~WeakSet",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 95,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "ArrayBuffer",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~ArrayBuffer",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 96,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DataView",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~DataView",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 97,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "JSON",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~JSON",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 98,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Promise",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Promise",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 99,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Generator",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Generator",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 100,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "GeneratorFunction",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/GeneratorFunction",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~GeneratorFunction",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 101,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Reflect",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Reflect",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 102,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Proxy",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy",
+    "memberof": "BuiltinExternal/ECMAScriptExternal.js",
+    "longname": "BuiltinExternal/ECMAScriptExternal.js~Proxy",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 104,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "CanvasRenderingContext2D",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~CanvasRenderingContext2D",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 105,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "DocumentFragment",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/DocumentFragment",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~DocumentFragment",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 106,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Element",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Element",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Element",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 107,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Event",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Event",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Event",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 108,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "Node",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/Node",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~Node",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 109,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "NodeList",
+    "externalLink": "https://developer.mozilla.org/en-US/docs/Web/API/NodeList",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~NodeList",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 110,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "XMLHttpRequest",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~XMLHttpRequest",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 111,
+    "kind": "external",
+    "static": true,
+    "variation": null,
+    "name": "AudioContext",
+    "externalLink": "https://developer.mozilla.org/en/docs/Web/API/AudioContext",
+    "memberof": "BuiltinExternal/WebAPIExternal.js",
+    "longname": "BuiltinExternal/WebAPIExternal.js~AudioContext",
+    "access": null,
+    "description": "",
+    "builtinExternal": true
+  },
+  {
+    "__docId__": 112,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "test/asserttest.js",
+    "memberof": null,
+    "longname": "test/asserttest.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import './support';\n\nfunction delay(ms) {\n  return new Promise((resolve) => {\n    setTimeout(resolve, ms);\n  });\n}\n\ndescribe('The test runner', function() {\n  it('should pass this test', async function() {\n    await delay(1000);\n    expect(true).to.be.ok;\n  });\n});\n"
+  },
+  {
+    "__docId__": 113,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe0",
+    "testId": 0,
+    "memberof": "test/asserttest.js",
+    "testDepth": 0,
+    "longname": "test/asserttest.js~describe0",
+    "access": null,
+    "description": "The test runner",
+    "lineNumber": 9
+  },
+  {
+    "__docId__": 114,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it1",
+    "testId": 1,
+    "memberof": "test/asserttest.js~describe0",
+    "testDepth": 1,
+    "longname": "test/asserttest.js~describe0.it1",
+    "access": null,
+    "description": "should pass this test",
+    "lineNumber": 10
+  },
+  {
+    "__docId__": 115,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "test/dummy-module.js",
+    "memberof": null,
+    "longname": "test/dummy-module.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "export const dummyVal = 42;\n\nexport function dummyFunc() {\n  return 42;\n}\n\nexport function dummyBuffer() {\n  return new Buffer([1,2,3,4,5,6,7,8]);\n}\n"
+  },
+  {
+    "__docId__": 116,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "test/renderer-require.js",
+    "memberof": null,
+    "longname": "test/renderer-require.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import {rendererRequireDirect} from '../src/renderer-require';\n\ndescribe('the rendererRequireDirect method', function() {\n  this.timeout(10*1000);\n\n  it('makes a request using remote-ajax', async function() {\n    let { module, dispose } = await rendererRequireDirect(require.resolve('../src/remote-ajax'));\n\n    try {\n      let result = await module.getJSON('https://httpbin.org/get');\n      expect(result.url).to.equal('https://httpbin.org/get');\n    } finally {\n      dispose();\n    }\n  });\n\n  it('marshals errors correctly', async function() {\n    let { module, dispose } = await rendererRequireDirect(require.resolve('../src/remote-ajax'));\n\n    let shouldDie = true;\n    try {\n      await module.getJSON('https://httpbin.org/status/500');\n    } catch (e) {\n      shouldDie = false;\n    } finally {\n      dispose();\n    }\n\n    expect(shouldDie).to.equal(false);\n  });\n\n  it('marshals simple values via getters', async function() {\n    let { module, dispose } = await rendererRequireDirect(require.resolve('./dummy-module'));\n\n    try {\n      let result = await module.dummyVal_get();\n      expect(result).to.equal(42);\n    } finally {\n      dispose();\n    }\n  });\n\n  it('marshals simple functions', async function() {\n    let { module, dispose } = await rendererRequireDirect(require.resolve('./dummy-module'));\n\n    try {\n      let result = await module.dummyFunc();\n      expect(result).to.equal(42);\n    } finally {\n      dispose();\n    }\n  });\n\n  it('marshals Buffers', async function() {\n    let { module, dispose } = await rendererRequireDirect(require.resolve('./dummy-module'));\n\n    try {\n      let result = await module.dummyBuffer();\n      expect(result.length).to.equal(8);\n      expect(result[0]).to.equal(1);\n      expect(result[7]).to.equal(8);\n    } finally {\n      dispose();\n    }\n  });\n});\n"
+  },
+  {
+    "__docId__": 117,
+    "kind": "testDescribe",
+    "static": true,
+    "variation": null,
+    "name": "describe2",
+    "testId": 2,
+    "memberof": "test/renderer-require.js",
+    "testDepth": 0,
+    "longname": "test/renderer-require.js~describe2",
+    "access": null,
+    "description": "the rendererRequireDirect method",
+    "lineNumber": 3
+  },
+  {
+    "__docId__": 118,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it3",
+    "testId": 3,
+    "memberof": "test/renderer-require.js~describe2",
+    "testDepth": 1,
+    "longname": "test/renderer-require.js~describe2.it3",
+    "access": null,
+    "description": "makes a request using remote-ajax",
+    "lineNumber": 6
+  },
+  {
+    "__docId__": 119,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it4",
+    "testId": 4,
+    "memberof": "test/renderer-require.js~describe2",
+    "testDepth": 1,
+    "longname": "test/renderer-require.js~describe2.it4",
+    "access": null,
+    "description": "marshals errors correctly",
+    "lineNumber": 17
+  },
+  {
+    "__docId__": 120,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it5",
+    "testId": 5,
+    "memberof": "test/renderer-require.js~describe2",
+    "testDepth": 1,
+    "longname": "test/renderer-require.js~describe2.it5",
+    "access": null,
+    "description": "marshals simple values via getters",
+    "lineNumber": 32
+  },
+  {
+    "__docId__": 121,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it6",
+    "testId": 6,
+    "memberof": "test/renderer-require.js~describe2",
+    "testDepth": 1,
+    "longname": "test/renderer-require.js~describe2.it6",
+    "access": null,
+    "description": "marshals simple functions",
+    "lineNumber": 43
+  },
+  {
+    "__docId__": 122,
+    "kind": "testIt",
+    "static": true,
+    "variation": null,
+    "name": "it7",
+    "testId": 7,
+    "memberof": "test/renderer-require.js~describe2",
+    "testDepth": 1,
+    "longname": "test/renderer-require.js~describe2.it7",
+    "access": null,
+    "description": "marshals Buffers",
+    "lineNumber": 54
+  },
+  {
+    "__docId__": 123,
+    "kind": "testFile",
+    "static": true,
+    "variation": null,
+    "name": "test/support.js",
+    "memberof": null,
+    "longname": "test/support.js",
+    "access": null,
+    "description": null,
+    "lineNumber": 1,
+    "content": "import '../src/babel-maybefill';\n\nlet chai = require(\"chai\");\nlet chaiAsPromised = require(\"chai-as-promised\");\n\nchai.should();\nchai.use(chaiAsPromised);\n\nglobal.chai = chai;\nglobal.chaiAsPromised = chaiAsPromised;\nglobal.expect = chai.expect;\nglobal.AssertionError = chai.AssertionError;\nglobal.Assertion = chai.Assertion;\nglobal.assert = chai.assert;\n"
+  }
+]

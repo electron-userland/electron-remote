@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base data-ice="baseUrl">
+  <title data-ice="title">electron-compilers API Document</title>
+  <link type="text/css" rel="stylesheet" href="css/style.css">
+  <link type="text/css" rel="stylesheet" href="css/prettify-tomorrow.css">
+  <script src="script/prettify/prettify.js"></script>
+  
+  
+  <script src="script/manual.js"></script>
+</head>
+<body class="layout-container" data-ice="rootContainer">
+
+<header>
+  <a href="./">Home</a>
+  
+  <a href="identifiers.html">Reference</a>
+  <a href="source.html">Source</a>
+  <a href="test.html" data-ice="testLink">Test</a>
+  <a data-ice="repoURL" href="https://github.com/paulcbetts/electron-remote" class="repo-url-github">Repository</a>
+  <div class="search-box">
+  <span>
+    <img src="./image/search.png">
+    <span class="search-input-edge"></span><input class="search-input"><span class="search-input-edge"></span>
+  </span>
+    <ul class="search-result"></ul>
+  </div>
+</header>
+
+<nav class="navigation" data-ice="nav"><div>
+  <ul>
+    
+  <li data-ice="doc"><span data-ice="kind" class="kind-class">C</span><span data-ice="name"><span><a href="class/src/execute-js-func.js~RecursiveProxyHandler.html">RecursiveProxyHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-createProxyForRemote">createProxyForRemote</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethod">executeJavaScriptMethod</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-executeJavaScriptMethodObservable">executeJavaScriptMethodObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-getSenderIdentifier">getSenderIdentifier</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-initializeEvalHandler">initializeEvalHandler</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEval">remoteEval</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-remoteEvalObservable">remoteEvalObservable</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-setParentInformation">setParentInformation</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-rendererRequireDirect">rendererRequireDirect</a></span></span></li>
+<li data-ice="doc"><span data-ice="kind" class="kind-function">F</span><span data-ice="name"><span><a href="function/index.html#static-function-requireTaskPool">requireTaskPool</a></span></span></li>
+</ul>
+</div>
+</nav>
+
+<div class="content" data-ice="content"><div data-ice="index" class="github-markdown"><h1 id="electron-remote-an-asynchronous-remote-and-more">electron-remote: an asynchronous &apos;remote&apos;, and more</h1>
+<p>electron-remote provides an alternative to Electron&apos;s <code>remote</code> module based around Promises instead of synchronous execution. It also provides an automatic way to use BrowserWindows as &quot;background processes&quot; that auto-scales based on usage, similar to Grand Central Dispatch or the .NET TPL Taskpool.</p>
+<h2 id="the-quickest-of-quick-starts">The Quickest of Quick Starts</h2>
+<h6 id="calling-code-in-other-windows">Calling code in other windows</h6>
+<pre><code class="lang-js"><code class="source-code prettyprint">import { createProxyForRemote } from &apos;electron-remote&apos;;
+
+// myWindowJs is now a proxy object for myWindow&apos;s `window` global object
+const myWindowJs = createProxyForRemote(myWindow);
+
+// Functions suffixed with _get will read a value
+userAgent = await myWindowJs.navigator.userAgent_get()</code>
+</code></pre>
+<h6 id="renderer-taskpool">Renderer Taskpool</h6>
+<pre><code class="lang-js"><code class="source-code prettyprint">import { requireTaskPool } from &apos;electron-remote&apos;;
+
+const myCoolModule = requireTaskPool(require.resolve(&apos;./my-cool-module&apos;));
+
+// This method will run synchronously, but in a background BrowserWindow process
+// so that your app will not block
+let result = await myCoolModule.calculateDigitsOfPi(100000);</code>
+</code></pre>
+<h2 id="but-i-like-remote-">But I like Remote!</h2>
+<p>Remote is super convenient! But it also has some downsides - its main downside is that its action is <strong>synchronous</strong>. This means that both the main and window processes will <em>wait</em> for a method to finish running. Even for quick methods, calling it too often can introduce scroll jank and generally cause performance problems. </p>
+<p>electron-remote is a version of remote that, while less ergonomic, guarantees that it won&apos;t block the calling thread.</p>
+<h2 id="using-createproxyforremote">Using createProxyForRemote</h2>
+<p><code>createProxyForRemote</code> is a replacement for places where you would use Electron&apos;s <code>executeJavaScript</code> method on BrowserWindow or WebView instances - however, it works a little differently. Using a new feature in ES2015 called <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy">proxy objects</a>, we create an object which represents the <code>window</code> object on a remote context, and all method calls get sent as messages to that remote instead of being run immediately, which feels very similar to the <code>remote</code> Electron module.</p>
+<p>This provides a number of very important advantages:</p>
+<ul>
+<li><code>createProxyForRemote</code> uses asynchronous IPC instead of blocking</li>
+<li>Parameters are serialized directly, so you don&apos;t have to try to build strings that can be <code>eval</code>d, which is a dangerous endeavor at best.</li>
+<li>Calling methods on objects is far more convenient than trying to poke at things via a remote eval.</li>
+</ul>
+<h4 id="how-do-i-get-properties-if-everything-is-a-promise-tho-">How do I get properties if everything is a Promise tho???</h4>
+<p>Astute observers will note, that getting the value of a property is always a synchronous operation - to facilitate that, any method with <code>_get()</code> appended to it will let you fetch the value for the property.</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">import { createProxyForRemote } from &apos;electron-remote&apos;;
+
+// myWindowJs is now a proxy object for myWindow&apos;s `window` global object
+const myWindowJs = createProxyForRemote(myWindow);
+
+// Functions suffixed with _get will read a value
+myWindowJs.navigator.userAgent_get()
+  .then((agent) =&gt; console.log(`The user agent is ${agent}`));</code>
+</code></pre>
+<h4 id="but-do-this-first-">But do this first!</h4>
+<p>Before you use <code>createProxyForRemote</code>, you <strong>must</strong> call <code>initializeEvalHandler()</code> in the target window on startup. This sets up the listeners that electron-remote will use.</p>
+<h4 id="bringing-it-all-together">Bringing it all together</h4>
+<pre><code class="lang-js"><code class="source-code prettyprint">// In my window&apos;s main.js
+initializeEvalHandler();
+window.addNumbers = (a,b) =&gt; a + b;
+
+
+// In my main process
+let myWindowProxy = createProxyForRemote(myWindow);
+myWindowProxy.addNumbers(5, 5)
+  .then((x) =&gt; console.log(x));
+
+&gt;&gt;&gt; 10</code>
+</code></pre>
+<h2 id="here-be-dragons">Here Be Dragons</h2>
+<p>electron-remote has a number of significant caveats versus the remote module that you should definitely be aware of:</p>
+<ul>
+<li>Remote values must be Serializable</li>
+</ul>
+<p>Objects that you return to the calling process must be serializable (i.e. you can call <code>JSON.stringify</code> on it and get a valid thing)- this means that creating Classes won&apos;t work, nor will return objects like BrowserWindows or other Electron objects. For example:</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">let myWindowProxy = createProxyForRemote(myWindow);
+
+// XXX: BAD - HTML elements aren&apos;t serializable
+let obj = myWindowProxy.document.createElement(&apos;h1&apos;);</code>
+</code></pre>
+<ul>
+<li>Remote event listeners aren&apos;t supported</li>
+</ul>
+<p>Anything that involves an event handler isn&apos;t going to work:</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">// XXX: BAD - You can&apos;t add event handlers
+myWindowProxy.document.addEventListener(&apos;onBlur&apos;, (e) =&gt; console.log(&quot;Blur!&quot;));</code>
+</code></pre>
+<h2 id="the-renderer-taskpool">The Renderer Taskpool</h2>
+<p>Renderer Taskpools provide an automatic way to use BrowserWindows as &quot;background processes&quot; that auto-scales based on usage, similar to Grand Central Dispatch or the .NET TPL Taskpool. This works by allowing you to provide a Module that you&apos;d like to load in the remote processes, which will be loaded and unloaded on the fly according to demand.</p>
+<p>Let&apos;s look at the example again:</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">import { requireTaskPool } from &apos;electron-remote&apos;;
+
+const myCoolModule = requireTaskPool(require.resolve(&apos;./my-cool-module&apos;));
+
+// This method will run synchronously, but in a background BrowserWindow process
+// so that your app will not block
+let result = await myCoolModule.calculateDigitsOfPi(100000);</code>
+</code></pre>
+<p>By default, <code>requireTaskPool</code> will create up to four background processes to concurrently run JS code on. As these processes become busy, requests will be queued to different processes and wait in line implicitly.</p>
+<h5 id="more-dragons">More Dragons</h5>
+<p>Since <code>requireTaskPool</code> will create and destroy processes as needed, this means that global variables or other state will be destroyed as well. You can&apos;t rely on setting a global variable and having it persist for a period of time longer than one method call.</p>
+<h2 id="the-remote-ajax-module">The remote-ajax module</h2>
+<p>One module that is super useful to have from the main process is a way to make network requests using Chromium&apos;s networking stack, which correctly does things such as respecting the system proxy settings. To this end, electron-remote comes with a convenient wrapper around Rx-DOM&apos;s AJAX methods called <code>remote-ajax</code>.</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">import { requireTaskPool } from &apos;electron-remote&apos;;
+
+const remoteAjax = requireTaskPool(require.resolve(&apos;electron-remote/remote-ajax&apos;));
+
+// Result is the object that XmlHttpRequest gives you
+let result = await remoteAjax.get(&apos;https://httpbin.org/get&apos;);
+console.log(result.url)
+
+&gt;&gt;&gt; &apos;https://httpbin.org/get&apos;</code>
+</code></pre>
+<p>See the documentation for <a href="https://github.com/Reactive-Extensions/RxJS-DOM/blob/master/modules/main-ajax/readme.md">Rx-DOM</a> for how these methods work.</p>
+<p>Another method that is included is <code>downloadFileOrUrl</code>, which lets you download a file to a target:</p>
+<pre><code class="lang-js"><code class="source-code prettyprint">/**
+ * Downloads a path as either a file path or a HTTP URL to a specific place
+ *
+ * @param  {string} pathOrUrl   Either an HTTP URL or a file path.
+ * @return {string}             The contents as a UTF-8 decoded string.
+ */
+function downloadFileOrUrl(pathOrUrl, target)</code>
+</code></pre>
+</div>
+</div>
+
+<footer class="footer">
+  Generated by <a href="https://esdoc.org">ESDoc<span data-ice="esdocVersion">(0.4.6)</span></a>
+</footer>
+
+<script src="script/search_index.js"></script>
+<script src="script/search.js"></script>
+<script src="script/pretty-print.js"></script>
+<script src="script/inherited-summary.js"></script>
+<script src="script/test-summary.js"></script>
+<script src="script/inner-link.js"></script>
+<script src="script/patch-for-local.js"></script>
+</body>
+</html>
