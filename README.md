@@ -1,5 +1,8 @@
 # electron-remote: an asynchronous 'remote', and more
 
+![](https://img.shields.io/npm/dm/electron-remote.svg) <a href="http://paulcbetts.github.io/electron-remote/docs">![](http://paulcbetts.github.io/electron-remote/docs/badge.svg)</a>
+
+
 electron-remote provides an alternative to Electron's `remote` module based around Promises instead of synchronous execution. It also provides an automatic way to use BrowserWindows as "background processes" that auto-scales based on usage, similar to Grand Central Dispatch or the .NET TPL Taskpool.
 
 ## The Quickest of Quick Starts
