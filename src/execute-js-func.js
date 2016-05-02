@@ -261,8 +261,8 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
     pathToObject = pathToObject.join('.');
   }
 
-  if (!pathToObject.match(/^[a-zA-Z0-9\.]+$/)) {
-    return Observable.throw(new Error('pathToObject must be of the form foo.bar.baz'));
+  if (!pathToObject.match(/^[a-zA-Z0-9\._]+$/)) {
+    return Observable.throw(new Error(`pathToObject must be of the form foo.bar.baz (got ${pathToObject})`));
   }
 
   let toSend = Object.assign({ args, id: uuid.v4(), path: pathToObject }, getSenderIdentifier());
