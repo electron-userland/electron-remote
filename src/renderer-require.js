@@ -8,7 +8,7 @@ import './custom-operators';
 const d = require('debug')('electron-remote:renderer-require');
 
 const BrowserWindow = process.type === 'renderer' ?
-  require('remote').BrowserWindow :
+  require('electron').remote.BrowserWindow :
   require('electron').BrowserWindow;
 
 /**

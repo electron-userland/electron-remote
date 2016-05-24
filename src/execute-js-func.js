@@ -10,7 +10,7 @@ let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 const d = require(isBrowser ? 'debug' : 'debug/browser')('electron-remote:execute-js-func');
 const BrowserWindow = isBrowser ?
   require('electron').BrowserWindow :
-  require('remote').require('browser-window');
+  require('electron').remote.BrowserWindow;
 
 /**
  * Determines the identifier for the current process (i.e. the thing we can use
@@ -26,7 +26,7 @@ export function getSenderIdentifier() {
   }
 
   return {
-    browserWindowId: require('remote').getCurrentWindow().id
+    browserWindowId: require('electron').remote.getCurrentWindow().id
   };
 }
 
@@ -146,7 +146,7 @@ function listenerForId(windowOrWebView, id, timeout) {
 function findTargetFromParentInfo(parentInfo=window.parentInfo) {
   if (!parentInfo) return null;
   if ('guestInstanceId' in parentInfo) {
-    return require('remote').getGuestWebContents(parentInfo.guestInstanceId);
+    return require('electron').remote.getGuestWebContents(parentInfo.guestInstanceId);
   }
 
   if ('browserWindowId' in parentInfo) {
