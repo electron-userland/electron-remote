@@ -432,6 +432,8 @@ export function initializeEvalHandler() {
   return Disposable.create(() => ipc.removeListener('execute-javascript-request', listener));
 }
 
+const emptyFn = function() {};
+
 /**
  * RecursiveProxyHandler is a ES6 Proxy Handler object that intercepts method
  * invocations and returns the full object that was invoked. So this means, if you
@@ -471,7 +473,7 @@ export class RecursiveProxyHandler {
    *                                   RecursiveProxyHandler.
    */
   static create(name, methodHandler, overrides=null) {
-    return new Proxy({}, new RecursiveProxyHandler(name, methodHandler, null, overrides));
+    return new Proxy(emptyFn, new RecursiveProxyHandler(name, methodHandler, null, overrides));
   }
 
   /**
@@ -484,7 +486,7 @@ export class RecursiveProxyHandler {
       return this.overrides[prop];
     }
 
-    return new Proxy({}, this.getOrCreateProxyHandler(prop));
+    return new Proxy(emptyFn, this.getOrCreateProxyHandler(prop));
   }
 
   /**
