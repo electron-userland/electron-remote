@@ -1,7 +1,7 @@
 import {RecursiveProxyHandler} from '../src/execute-js-func';
 
 describe('RecursiveProxyHandler', function() {
-  it.only('should let me apply a function', function() {
+  it('should let me apply a function', function() {
     var proxy = RecursiveProxyHandler.create('proxy', (names, args) => {
       console.log(`${JSON.stringify(names)} - ${JSON.stringify(args)}`);
     });
