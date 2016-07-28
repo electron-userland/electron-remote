@@ -45,11 +45,12 @@ function getReplyMethod(request) {
 
   if (target) {
     return (...a) => {
-      if (target.isCrashed() || target.isDestroyed()) {
+      let crashedTarget = 'webContents' in target ? target.webContents : target;
+      if (crashedTarget.isCrashed() || crashedTarget.isDestroyed()) {
         console.log(`Tried to send ${JSON.stringify(a)} as reply but it is destroyed`);
         return;
       }
-      
+
       target.send(...a);
     };
   } else {
