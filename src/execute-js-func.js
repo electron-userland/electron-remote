@@ -46,17 +46,7 @@ function getReplyMethod(request) {
   if (target) {
     return (...a) => {
       let crashedTarget = 'webContents' in target ? target.webContents : target;
-      if (crashedTarget.isCrashed()) {
-        console.log(`Tried to send ${JSON.stringify(a)} as reply but it is destroyed`);
-        return;
-      }
-
-      if ('isDestroyed' in crashedTarget && crashedTarget.isDestroyed()) {
-        console.log(`Tried to send ${JSON.stringify(a)} as reply but it is destroyed`);
-        return;
-      }
-
-      if ('getWebContents' in crashedTarget && crashedTarget.getWebContents().isDestroyed()) {
+      if (crashedTarget.isCrashed() || crashedTarget.isDestroyed()) {
         console.log(`Tried to send ${JSON.stringify(a)} as reply but it is destroyed`);
         return;
       }
@@ -119,7 +109,7 @@ function getSendMethod(windowOrWebView) {
     } :
     (...a) => {
       d(`webView send: ${JSON.stringify(a)}`);
-      if (windowOrWebView.isCrashed() || windowOrWebView.getWebContents().isDestroyed()) {
+      if (windowOrWebView.isCrashed() || windowOrWebView.isDestroyed()) {
         console.log(`Tried to send ${JSON.stringify(a)} to webview but it is destroyed`);
         return;
       }
