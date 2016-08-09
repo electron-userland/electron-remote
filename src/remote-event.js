@@ -1,7 +1,7 @@
 import {remote, ipcRenderer} from 'electron';
 import {CompositeDisposable, Disposable, Observable} from 'rx';
 
-remote.require('./remote-event-browser');
+remote.require(require.resolve('./remote-event-browser'));
 
 export function fromRemoteWindow(browserWindow, event) {
   let type = 'window';
