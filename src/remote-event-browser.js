@@ -8,7 +8,7 @@ function initialize() {
   d('Initializing browser-half of remote-event');
   
   ipcMain.on('electron-remote-event-subscribe', (e, x) => {
-    const {type, id, event} = x;
+    const {type, id, event, onWebContents} = x;
     let target = null;
     
     switch(type) {
@@ -25,7 +25,7 @@ function initialize() {
       return;
     }
     
-    const key = `${type}-${id}-${event}-${e.sender.id}`;
+    const key = `electron-remote-event-${type}-${id}-${event}-${e.sender.id}`;
     if (eventListenerTable[key]) {
       d(`Using existing key ${key} in eventListenerTable`);
       eventListenerTable[key].refCount++;
@@ -35,24 +35,32 @@ function initialize() {
     
     let targetWebContents = e.sender;
     
-    d(`Creating new event subscription with key ${key}`);
+    d(`Creating new event subscription with key ${key}: ${event}`);
+    d(JSON.stringify(Object.keys(target)));
+    
     eventListenerTable[key] = {
       refCount: 1,
-      disposable: Observable.fromEvent(target, event, (...args) => [args])
-        .takeUntil(Observable.fromEvent(targetWebContents, 'destroyed'))
+      disposable: Observable.fromEvent(onWebContents ? target.webContents : target, event, (...args) => [args])
         .do(() => d(`Got event on browser side: ${key}`))
-        .subscribe((args) => targetWebContents.send(`electron-remote-event-${key}`, args))
+        .takeUntil(Observable.fromEvent(targetWebContents, 'destroyed'))
+        .subscribe((args) => targetWebContents.send(key, args))
     };
     
     e.returnValue = {error: null};
   });
   
   ipcMain.on('electron-remote-event-dispose', (e, key) => {
-    eventListenerTable[key].refCount--;
-    if (eventListenerTable[key].refCount <= 0) {
-      let k = eventListenerTable[key];
-      delete eventListenerTable[k];
-      
+    let k = eventListenerTable[key];
+    if (!k) {
+      d(`*** Tried to release missing key! ${key}`);
+      return;
+    }
+    
+    k.refCount--;
+    if (k.refCount <= 0) {
+      d(`Disposing key: ${key}`);
+    
+      delete eventListenerTable[key];
       k.disposable.dispose();
     }
   });
