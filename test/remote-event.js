@@ -3,7 +3,7 @@ import {fromRemoteWindow} from '../src/remote-event';
 
 const {BrowserWindow} = remote;
 
-describe.only('fromRemoteWindow', function() {
+describe('fromRemoteWindow', function() {
   this.timeout(10*1000);
   
   it('should get the ready-to-show event', async function() {
