@@ -2,8 +2,11 @@ import {BrowserWindow, ipcMain} from 'electron';
 import {Observable} from 'rx';
 
 const eventListenerTable = {};
+const d = require('debug-electron')('remote-event-browser');
 
 function initialize() {
+  d('Initializing browser-half of remote-event');
+  
   ipcMain.on('electron-remote-event-subscribe', (e, x) => {
     const {type, id, event} = x;
     let target = null;
@@ -17,25 +20,31 @@ function initialize() {
     }
     
     if (!target) {
-      event.returnValue = {error: `Failed to find ${type} with ID ${id}`};
+      e.returnValue = {error: `Failed to find ${type} with ID ${id}`};
+      d(e.returnValue.error);
       return;
     }
     
     const key = `${type}-${id}-${event}-${e.sender.id}`;
     if (eventListenerTable[key]) {
+      d(`Using existing key ${key} in eventListenerTable`);
       eventListenerTable[key].refCount++;
-      event.returnValue = {error: null};
+      e.returnValue = {error: null};
       return;
     }
     
     let targetWebContents = e.sender;
     
+    d(`Creating new event subscription with key ${key}`);
     eventListenerTable[key] = {
       refCount: 1,
       disposable: Observable.fromEvent(target, event, (...args) => [args])
         .takeUntil(Observable.fromEvent(targetWebContents, 'destroyed'))
+        .do(() => d(`Got event on browser side: ${key}`))
         .subscribe((args) => targetWebContents.send(`electron-remote-event-${key}`, args))
     };
+    
+    e.returnValue = {error: null};
   });
   
   ipcMain.on('electron-remote-event-dispose', (e, key) => {
