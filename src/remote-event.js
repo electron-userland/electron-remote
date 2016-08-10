@@ -1,7 +1,11 @@
 import {remote, ipcRenderer} from 'electron';
 import {CompositeDisposable, Disposable, Observable} from 'rx';
 
-remote.require(require.resolve('./remote-event-browser'));
+const isBrowser = process.type === 'browser';
+
+if (!isBrowser) {
+  remote.require(require.resolve('./remote-event-browser'));
+}
 
 const d = require('debug-electron')('remote-event');
 
@@ -19,6 +23,10 @@ const d = require('debug-electron')('remote-event');
  *                                remove the event listener.
  */
 export function fromRemoteWindow(browserWindow, event, onWebContents=false) {
+  if (isBrowser) {
+    return Observable.fromEvent(browserWindow, event, (...args) => args);
+  }
+  
   let type = 'window';
   let id = browserWindow.id;
   
