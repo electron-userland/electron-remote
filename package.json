@@ -26,8 +26,9 @@
   "main": "lib/index.js",
   "homepage": "https://github.com/paulcbetts/electron-remote",
   "dependencies": {
-    "babel-polyfill": "^6.3.14",
+    "babel-polyfill": "^6.13.0",
     "debug": "^2.2.0",
+    "debug-electron": "0.0.1",
     "node-uuid": "^1.4.7",
     "pify": "^2.3.0",
     "rx": "^4.0.7",
@@ -35,20 +36,20 @@
     "xmlhttprequest": "^1.8.0"
   },
   "devDependencies": {
-    "babel-cli": "^6.4.5",
-    "babel-eslint": "^5.0.0-beta6",
-    "babel-plugin-transform-async-to-generator": "^6.7.4",
-    "babel-plugin-transform-runtime": "^6.7.5",
+    "babel-cli": "^6.11.4",
+    "babel-eslint": "^6.1.2",
+    "babel-plugin-transform-async-to-generator": "^6.8.0",
+    "babel-plugin-transform-runtime": "^6.12.0",
     "babel-preset-es2016-node5": "^1.1.2",
-    "babel-register": "^6.4.3",
-    "chai": "^3.4.1",
-    "chai-as-promised": "^5.2.0",
-    "cross-env": "^1.0.7",
-    "electron-mocha": "^1.2.2",
-    "electron-prebuilt-compile": "^1.1.2",
-    "esdoc": "^0.4.3",
+    "babel-register": "^6.11.6",
+    "chai": "^3.5.0",
+    "chai-as-promised": "^5.3.0",
+    "cross-env": "^2.0.0",
+    "electron-mocha": "^3.0.0",
+    "electron-prebuilt-compile": "1.2.7",
+    "esdoc": "^0.4.8",
     "esdoc-es7-plugin": "0.0.3",
     "esdoc-plugin-async-to-sync": "^0.5.0",
-    "eslint": "^1.10.3"
+    "eslint": "^3.2.2"
   }
 }
