@@ -5,6 +5,19 @@ remote.require(require.resolve('./remote-event-browser'));
 
 const d = require('debug-electron')('remote-event');
 
+/**
+ * Safely subscribes to an event on a BrowserWindow or its WebContents. This
+ * method avoids the "remote event listener" Electron issue.
+ *
+ * @param browserWindow  BrowserWindow   - the window to listen to
+ * @param event  String  - The event to listen to
+ * @param onWebContents  Boolean  - If true, the event is on the window's
+ *                                  WebContents, not on the window itself.
+ *
+ * @returns Observable<Object>  - an Observable representing the event.
+ *                                Unsubscribing from the Observable will
+ *                                remove the event listener.
+ */
 export function fromRemoteWindow(browserWindow, event, onWebContents=false) {
   let type = 'window';
   let id = browserWindow.id;
