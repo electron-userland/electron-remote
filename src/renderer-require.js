@@ -8,11 +8,9 @@ import './custom-operators';
 
 const d = require('debug-electron')('electron-remote:renderer-require');
 
-const isBrowser = process.type === 'browser';
-
-const BrowserWindow = isBrowser ?
-  require('electron').BrowserWindow:
-  require('electron').remote.BrowserWindow;
+const BrowserWindow = process.type === 'renderer' ?
+  require('electron').remote.BrowserWindow :
+  require('electron').BrowserWindow;
 
 /**
  * Creates a BrowserWindow, requires a module in it, then returns a Proxy
@@ -28,9 +26,11 @@ export async function rendererRequireDirect(modulePath) {
   let bw = new BrowserWindow({width: 500, height: 500, show: false});
   let fullPath = require.resolve(modulePath);
 
-  let ready = isBrowser ?
-    windowIsReady(bw) :
-    remoteWindowIsReady(bw);
+  let ready = Observable.merge(
+    fromRemoteWindow(bw, 'did-finish-load', true),
+    fromRemoteWindow(bw, 'did-fail-load', true)
+      .flatMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
+    ).take(1).toPromise();
 
   /* Uncomment for debugging!
   bw.show();
@@ -53,21 +53,6 @@ export async function rendererRequireDirect(modulePath) {
     executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),
     dispose: () => bw.close()
   };
-}
-
-function windowIsReady(bw) {
-  return new Promise((res,rej) => {
-    bw.webContents.once('did-finish-load', () => res(true));
-    bw.webContents.once('did-fail-load', (ev, errCode, errMsg) => rej(new Error(errMsg)));
-  });
-}
-
-function remoteWindowIsReady(bw) {
-  return Observable.merge(
-    fromRemoteWindow(bw, 'did-finish-load', true),
-    fromRemoteWindow(bw, 'did-fail-load', true)
-      .flatMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
-    ).take(1).toPromise();
 }
 
 /**
