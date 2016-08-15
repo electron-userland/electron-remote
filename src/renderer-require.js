@@ -30,7 +30,7 @@ export async function rendererRequireDirect(modulePath) {
     fromRemoteWindow(bw, 'did-finish-load', true),
     fromRemoteWindow(bw, 'did-fail-load', true)
       .flatMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
-  ).take(1).toPromise();
+    ).take(1).toPromise();
 
   /* Uncomment for debugging!
   bw.show();
