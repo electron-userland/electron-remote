@@ -1,5 +1,17 @@
 import uuid from 'node-uuid';
-import {Observable, Disposable, TimeoutError} from 'rx';
+import {Observable} from 'rxjs/Observable';
+import {Subscription} from 'rxjs/Subscription';
+
+import 'rxjs/add/observable/of';
+import 'rxjs/add/observable/throw';
+
+import 'rxjs/add/operator/catch';
+import 'rxjs/add/operator/do';
+import 'rxjs/add/operator/filter';
+import 'rxjs/add/operator/take';
+import 'rxjs/add/operator/mergeMap';
+import 'rxjs/add/operator/timeout';
+import 'rxjs/add/operator/toPromise';
 
 const requestChannel = 'execute-javascript-request';
 const responseChannel = 'execute-javascript-response';
@@ -64,13 +76,13 @@ function listenToIpc(channel) {
   return Observable.create((subj) => {
     let listener = (event, ...args) => {
       d(`Got an event for ${channel}: ${JSON.stringify(args)}`);
-      subj.onNext(args);
+      subj.next(args);
     };
 
     d(`Setting up listener! ${channel}`);
     ipc.on(channel, listener);
 
-    return Disposable.create(() =>
+    return new Subscription(() =>
       ipc.removeListener(channel, listener));
   });
 }
@@ -118,16 +130,16 @@ function getSendMethod(windowOrWebView) {
 function listenerForId(windowOrWebView, id, timeout) {
   return listenToIpc(responseChannel)
     .do(([x]) => d(`Got IPC! ${x.id} === ${id}; ${JSON.stringify(x)}`))
-    .where(([receive]) => receive.id === id && id)
+    .filter(([receive]) => receive.id === id && id)
     .take(1)
-    .flatMap(([receive]) => {
+    .mergeMap(([receive]) => {
       if (receive.error) {
         let e = new Error(receive.error.message);
         e.stack = receive.error.stack;
         return Observable.throw(e);
       }
 
-      return Observable.return(receive.result);
+      return Observable.of(receive.result);
     })
     .timeout(timeout);
 }
@@ -199,14 +211,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
   }
 
   let toSend = Object.assign({ id: uuid.v4(), eval: str }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout)
-    .catch((e) => {
-      if (e instanceof TimeoutError) {
-        return Observable.throw(new Error(`Timed out while running code: ${str}`));
-      } else {
-        return Observable.throw(e);
-      }
-    });
+  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -266,14 +271,7 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
   }
 
   let toSend = Object.assign({ args, id: uuid.v4(), path: pathToObject }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout)
-    .catch((e) => {
-      if (e instanceof TimeoutError) {
-        return Observable.throw(new Error(`Timed out while running method: ${pathToObject}`));
-      } else {
-        return Observable.throw(e);
-      }
-    });
+  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -429,7 +427,7 @@ export function initializeEvalHandler() {
   d("Set up listener!");
   ipc.on('execute-javascript-request', listener);
 
-  return Disposable.create(() => ipc.removeListener('execute-javascript-request', listener));
+  return new Subscription(() => ipc.removeListener('execute-javascript-request', listener));
 }
 
 const emptyFn = function() {};
