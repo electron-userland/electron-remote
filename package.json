@@ -28,7 +28,6 @@
   "main": "lib/index.js",
   "homepage": "https://github.com/paulcbetts/electron-remote",
   "dependencies": {
-    "babel-polyfill": "^6.13.0",
     "debug": "^2.2.0",
     "debug-electron": "0.0.1",
     "node-uuid": "^1.4.7",
