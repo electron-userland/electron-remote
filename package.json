@@ -32,8 +32,7 @@
     "debug-electron": "0.0.1",
     "node-uuid": "^1.4.7",
     "pify": "^2.3.0",
-    "rx": "^4.0.7",
-    "rx-dom": "^7.0.3",
+    "rxjs": "^5.0.0-beta.12",
     "xmlhttprequest": "^1.8.0"
   },
   "devDependencies": {
