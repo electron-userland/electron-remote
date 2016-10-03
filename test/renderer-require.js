@@ -53,7 +53,7 @@ describe('the rendererRequireDirect method', function() {
     }
   });
 
-  it.only('marshals Buffers', async function() {
+  it('marshals Buffers', async function() {
     let { module, unsubscribe } = await rendererRequireDirect(require.resolve('./dummy-module'));
 
     try {
