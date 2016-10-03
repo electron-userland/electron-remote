@@ -1,6 +1,19 @@
 import path from 'path';
-import {AsyncSubject, Observable, Subject} from 'rx';
 import {fromRemoteWindow} from './remote-event';
+
+import {AsyncSubject} from 'rxjs/AsyncSubject';
+import {Observable} from 'rxjs/Observable';
+import {Subject} from 'rxjs/Subject';
+
+import 'rxjs/add/observable/merge';
+import 'rxjs/add/observable/throw';
+import 'rxjs/add/observable/fromPromise';
+import 'rxjs/add/observable/of';
+import 'rxjs/add/observable/defer';
+
+import 'rxjs/add/operator/mergeMap';
+import 'rxjs/add/operator/take';
+import 'rxjs/add/operator/toPromise';
 
 import {createProxyForRemote, executeJavaScriptMethod, executeJavaScriptMethodObservable, RecursiveProxyHandler} from './execute-js-func';
 
@@ -19,7 +32,7 @@ const BrowserWindow = process.type === 'renderer' ?
  *
  * @param  {string} modulePath  The path of the module to include.
  * * @return {Object}             Returns an Object with a `module` which is a Proxy
- *                              object, and a `dispose` method that will clean up
+ *                              object, and a `unsubscribe` method that will clean up
  *                              the window.
  */
 export async function rendererRequireDirect(modulePath) {
@@ -29,7 +42,7 @@ export async function rendererRequireDirect(modulePath) {
   let ready = Observable.merge(
     fromRemoteWindow(bw, 'did-finish-load', true),
     fromRemoteWindow(bw, 'did-fail-load', true)
-      .flatMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
+      .mergeMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
     ).take(1).toPromise();
 
   /* Uncomment for debugging!
@@ -51,7 +64,7 @@ export async function rendererRequireDirect(modulePath) {
     module: createProxyForRemote(bw).requiredModule,
     executeJavaScriptMethod: (chain, ...args) => executeJavaScriptMethod(bw, chain, ...args),
     executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),
-    dispose: () => bw.close()
+    unsubscribe: () => bw.close()
   };
 }
 
@@ -89,7 +102,7 @@ class RendererTaskpoolItem {
     // exist, create one.
     const getOrCreateWindow = () => {
       let item = freeWindowList.pop();
-      if (item) return Observable.return(item);
+      if (item) return Observable.of(item);
 
       return Observable.fromPromise(rendererRequireDirect(modulePath));
     };
@@ -101,19 +114,19 @@ class RendererTaskpoolItem {
     invocationQueue
       .map(({chain, args, retval}) => Observable.defer(() => {
         return getOrCreateWindow()
-          .flatMap((wnd) => {
+          .mergeMap((wnd) => {
             d(`Actually invoking ${chain.join('.')}(${JSON.stringify(args)})`);
             let ret = wnd.executeJavaScriptMethodObservable(chain, ...args);
 
             ret.multicast(retval).connect();
-            return ret.map(() => wnd).catch(Observable.return(wnd));
+            return ret.map(() => wnd).catch(Observable.of(wnd));
           });
       }))
       .merge(maxConcurrency)
       .subscribe((wnd) => {
-        if (!wnd || !wnd.dispose) throw new Error("Bogus!");
+        if (!wnd || !wnd.unsubscribe) throw new Error("Bogus!");
         freeWindowList.push(wnd);
-        completionQueue.onNext(true);
+        completionQueue.next(true);
       });
 
     // Here, we create a version of RecursiveProxyHandler that will turn method
@@ -126,7 +139,7 @@ class RendererTaskpoolItem {
       d(`Queuing ${chain.join('.')}(${JSON.stringify(args)})`);
       let retval = new AsyncSubject();
 
-      invocationQueue.onNext({ chain: ['requiredModule'].concat(chain), args, retval });
+      invocationQueue.next({ chain: ['requiredModule'].concat(chain), args, retval });
       return retval.toPromise();
     });
 
@@ -136,7 +149,7 @@ class RendererTaskpoolItem {
       d(`Freeing ${freeWindowList.length} taskpool processes`);
       while (freeWindowList.length > 0) {
         let wnd = freeWindowList.pop();
-        if (wnd) wnd.dispose();
+        if (wnd) wnd.unsubscribe();
       }
     });
   }

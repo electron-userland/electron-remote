@@ -1,5 +1,8 @@
-import rx from 'rx-dom';
 import promisify from 'pify';
+
+import 'rxjs/add/operator/toPromise';
+
+const rx = require('./rx-dom');
 
 const toInclude = ['ajax', 'get', 'getJSON', 'post'];
 const fs = promisify(require('fs'));
@@ -15,7 +18,7 @@ module.exports = toInclude.reduce((acc, k) => {
       stall = new Promise((res) => setTimeout(res, 100));
     }
 
-    return stall.then(() => rx.DOM[k](...args).toPromise());
+    return stall.then(() => rx[k](...args).toPromise());
   };
 
   return acc;
@@ -85,7 +88,7 @@ module.exports.downloadFileOrUrl = async function(pathOrUrl, target) {
   } finally {
     await fs.close(fd);
   }
-  
+
   if (!response.ok) {
     throw new Error(`HTTP request returned error: ${response.status}: ${response.statusText}`);
   }

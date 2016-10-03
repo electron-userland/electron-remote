@@ -396,8 +396,8 @@ async function evalRemoteMethod(path, args) {
  * messages to. You need to call this method in any process that you want to
  * execute remote methods on.
  *
- * @return {Disposable}   An object that you can call `dispose` on to clean up
- *                        the listener early. Usually not necessary.
+ * @return {Subscription}   An object that you can call `unsubscribe` on to clean up
+ *                          the listener early. Usually not necessary.
  */
 export function initializeEvalHandler() {
   let listener = async function(e, receive) {
