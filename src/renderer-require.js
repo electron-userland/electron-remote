@@ -14,6 +14,7 @@ import 'rxjs/add/observable/defer';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/mergeAll';
 import 'rxjs/add/operator/mergeMap';
+import 'rxjs/add/operator/multicast';
 import 'rxjs/add/operator/take';
 import 'rxjs/add/operator/toPromise';
 
