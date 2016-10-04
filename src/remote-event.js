@@ -1,5 +1,13 @@
 import {remote, ipcRenderer} from 'electron';
-import {CompositeDisposable, Disposable, Observable} from 'rx';
+
+import {Observable} from 'rxjs/Observable';
+import {Subscription} from 'rxjs/Subscription';
+
+import 'rxjs/add/observable/throw';
+import 'rxjs/add/observable/fromEvent';
+
+import 'rxjs/add/operator/do';
+import 'rxjs/add/operator/publish';
 
 const isBrowser = process.type === 'browser';
 
@@ -45,15 +53,15 @@ export function fromRemoteWindow(browserWindow, event, onWebContents=false) {
   }
 
   let ret = Observable.create((subj) => {
-    let disp = new CompositeDisposable();
+    let disp = new Subscription();
     disp.add(
       Observable.fromEvent(ipcRenderer, key, (e,arg) => arg)
         .do(() => d(`Got event: ${key}`))
         .subscribe(subj));
 
-    disp.add(Disposable.create(() => {
+    disp.add(new Subscription(() => {
       d(`Got event: ${key}`);
-      ipcRenderer.send('electron-remote-event-dispose', key);
+      ipcRenderer.send('electron-remote-event-unsubscribe', key);
     }));
 
     return disp;
