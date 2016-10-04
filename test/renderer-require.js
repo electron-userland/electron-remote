@@ -1,5 +1,3 @@
-import 'rxjs';
-
 import {rendererRequireDirect} from '../src/renderer-require';
 
 describe('the rendererRequireDirect method', function() {
