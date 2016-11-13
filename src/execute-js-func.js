@@ -25,7 +25,7 @@ const BrowserWindow = isBrowser ?
 
 let nextId = 1;
 function getNextId() {
-  return nextId++;
+  return (process.pid << 32) | (nextId++);
 }
 
 /**
