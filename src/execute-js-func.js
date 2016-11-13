@@ -1,4 +1,3 @@
-import uuid from 'node-uuid';
 import {Observable} from 'rxjs/Observable';
 import {Subscription} from 'rxjs/Subscription';
 
@@ -23,6 +22,11 @@ const d = require('debug-electron')('electron-remote:execute-js-func');
 const BrowserWindow = isBrowser ?
   require('electron').BrowserWindow :
   require('electron').remote.BrowserWindow;
+
+let nextId = 1;
+function getNextId() {
+  return nextId++;
+}
 
 /**
  * Determines the identifier for the current process (i.e. the thing we can use
@@ -210,7 +214,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
     return Observable.throw(new Error("RemoteEval called with empty or null code"));
   }
 
-  let toSend = Object.assign({ id: uuid.v4(), eval: str }, getSenderIdentifier());
+  let toSend = Object.assign({ id: getNextId(), eval: str }, getSenderIdentifier());
   let ret = listenerForId(windowOrWebView, toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
@@ -270,7 +274,7 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
     return Observable.throw(new Error(`pathToObject must be of the form foo.bar.baz (got ${pathToObject})`));
   }
 
-  let toSend = Object.assign({ args, id: uuid.v4(), path: pathToObject }, getSenderIdentifier());
+  let toSend = Object.assign({ args, id: getNextId(), path: pathToObject }, getSenderIdentifier());
   let ret = listenerForId(windowOrWebView, toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
