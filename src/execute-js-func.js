@@ -1,5 +1,6 @@
 import {Observable} from 'rxjs/Observable';
 import {Subscription} from 'rxjs/Subscription';
+import Hashids from 'hashids';
 
 import 'rxjs/add/observable/of';
 import 'rxjs/add/observable/throw';
@@ -24,8 +25,10 @@ const BrowserWindow = isBrowser ?
   require('electron').remote.BrowserWindow;
 
 let nextId = 1;
+const hashIds = new Hashids();
+
 function getNextId() {
-  return (process.pid << 32) | (nextId++);
+  return hashIds.encode(process.pid, nextId++);
 }
 
 /**
