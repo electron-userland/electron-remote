@@ -15,7 +15,7 @@ if (!isBrowser) {
   remote.require(require.resolve('./remote-event-browser'));
 }
 
-const d = require('debug-electron')('remote-event');
+const d = require('debug')('remote-event');
 
 /**
  * Safely subscribes to an event on a BrowserWindow or its WebContents. This

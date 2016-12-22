@@ -28,8 +28,7 @@
   "main": "lib/index.js",
   "homepage": "https://github.com/paulcbetts/electron-remote",
   "dependencies": {
-    "debug": "^2.2.0",
-    "debug-electron": "^0.0.2",
+    "debug": "^2.5.1",
     "hashids": "^1.1.1",
     "pify": "^2.3.0",
     "rxjs": "^5.0.0-beta.12",

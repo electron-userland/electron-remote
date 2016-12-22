@@ -7,7 +7,7 @@ import 'rxjs/add/operator/do';
 import 'rxjs/add/operator/takeUntil';
 
 const eventListenerTable = {};
-const d = require('debug-electron')('remote-event-browser');
+const d = require('debug')('remote-event-browser');
 
 function initialize() {
   d('Initializing browser-half of remote-event');

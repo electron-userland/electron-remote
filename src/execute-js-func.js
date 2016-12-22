@@ -19,7 +19,7 @@ const responseChannel = 'execute-javascript-response';
 let isBrowser = (process.type === 'browser');
 let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 
-const d = require('debug-electron')('electron-remote:execute-js-func');
+const d = require('debug')('electron-remote:execute-js-func');
 const BrowserWindow = isBrowser ?
   require('electron').BrowserWindow :
   require('electron').remote.BrowserWindow;
