@@ -30,15 +30,23 @@ const d = require('debug')('remote-event');
  *                                Unsubscribing from the Observable will
  *                                remove the event listener.
  */
-export function fromRemoteWindow(browserWindow, event, onWebContents=false) {
+export function fromRemoteWindow(browserWindowOrWebView, event, onWebContents=false) {
   if (isBrowser) {
-    return onWebContents ?
-      Observable.fromEvent(browserWindow.webContents, event, (...args) => args) :
-      Observable.fromEvent(browserWindow, event, (...args) => args);
+    if (onWebContents) {
+      let wc = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents());
+      return Observable.fromEvent(wc, event, (...args) => args);
+    } else {
+      Observable.fromEvent(browserWindowOrWebView, event, (...args) => args);
+    }
   }
 
-  let type = 'window';
-  let id = browserWindow.id;
+  let type = onWebContents ? 'webcontents' : 'window';
+  let id;
+  if (onWebContents) {
+    id = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents()).id;
+  } else {
+    id = browserWindowOrWebView.id;
+  }
 
   const key = `electron-remote-event-${type}-${id}-${event}-${remote.getCurrentWebContents().id}`;
 
