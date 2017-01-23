@@ -40,6 +40,10 @@ export function fromRemoteWindow(browserWindowOrWebView, event, onWebContents=fa
     }
   }
 
+  if (Object.getPrototypeOf(browserWindowOrWebView).constructor.name === 'webview' && !onWebContents) {
+    throw new Error("WebViews can only be used with onWebContents=true");
+  }
+
   let type = onWebContents ? 'webcontents' : 'window';
   let id;
   if (onWebContents) {
