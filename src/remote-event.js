@@ -31,23 +31,35 @@ const d = require('debug')('remote-event');
  *                                remove the event listener.
  */
 export function fromRemoteWindow(browserWindowOrWebView, event, onWebContents=false) {
+  let ctorName = Object.getPrototypeOf(browserWindowOrWebView).constructor.name;
+
   if (isBrowser) {
     if (onWebContents) {
-      let wc = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents());
+      let wc;
+      if (ctorName === 'WebContents') {
+        wc = browserWindowOrWebView;
+      } else {
+        wc = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents());
+      }
       return Observable.fromEvent(wc, event, (...args) => args);
     } else {
       Observable.fromEvent(browserWindowOrWebView, event, (...args) => args);
     }
   }
 
-  if (Object.getPrototypeOf(browserWindowOrWebView).constructor.name === 'webview' && !onWebContents) {
-    throw new Error("WebViews can only be used with onWebContents=true");
+
+  if ((ctorName === 'webview' || ctorName === 'WebContents') && !onWebContents) {
+    throw new Error("WebViews and WebContents can only be used with onWebContents=true");
   }
 
   let type = onWebContents ? 'webcontents' : 'window';
   let id;
   if (onWebContents) {
-    id = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents()).id;
+    if (ctorName === 'WebContents') {
+      id = browserWindowOrWebView.id;
+    } else {
+      id = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents()).id;
+    }
   } else {
     id = browserWindowOrWebView.id;
   }
