@@ -1,4 +1,4 @@
-import {BrowserWindow, ipcMain} from 'electron';
+import {BrowserWindow, webContents, ipcMain} from 'electron';
 import {Observable} from 'rxjs/Observable';
 
 import 'rxjs/add/observable/fromEvent';
@@ -19,6 +19,9 @@ function initialize() {
     switch(type) {
     case 'window':
       target = BrowserWindow.fromId(id);
+      break;
+    case 'webcontents':
+      target = webContents.fromId(id);
       break;
     default:
       target = null;
