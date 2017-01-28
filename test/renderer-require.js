@@ -1,4 +1,17 @@
-import {rendererRequireDirect} from '../src/renderer-require';
+import {rendererRequireDirect, requireTaskPool} from '../src/renderer-require';
+
+describe('the requireTaskPool method', function() {
+  this.timeout(10*1000);
+
+  it('can make a bunch of requests at once', async function() {
+    const { getJSON } = requireTaskPool(require.resolve('../src/remote-ajax', 10));
+
+    for (let i = 0; i < 20; i++) {
+      const result = await getJSON('https://httpbin.org/get');
+      expect(result.url).to.equal('https://httpbin.org/get');
+    }
+  });
+});
 
 describe('the rendererRequireDirect method', function() {
   this.timeout(10*1000);
