@@ -111,20 +111,15 @@ function listenToIpc(channel) {
  */
 function getSendMethod(windowOrWebView) {
   if (!windowOrWebView) return (...a) => ipc.send(...a);
-  if ('isDestroyed' in windowOrWebView && windowOrWebView.isDestroyed()) {
-    d(`BrowserWindow has been destroyed`);
-    return noop;
-  }
 
   if ('webContents' in windowOrWebView) {
-    if (windowOrWebView.webContents.isDestroyed()) {
-      d(`WebContents has been destroyed`);
-      return noop;
-    }
-
     return (...a) => {
       d(`webContents send: ${JSON.stringify(a)}`);
-      windowOrWebView.webContents.send(...a);
+      if (!windowOrWebView.webContents.isDestroyed()) {
+        windowOrWebView.webContents.send(...a);
+      } else {
+        d(`WebContents has been destroyed`);
+      }
     };
   } else {
     return (...a) => {
