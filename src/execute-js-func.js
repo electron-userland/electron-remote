@@ -19,6 +19,7 @@ const responseChannel = 'execute-javascript-response';
 let isBrowser = (process.type === 'browser');
 let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 
+const noop = () => { };
 const d = require('debug-electron')('electron-remote:execute-js-func');
 const BrowserWindow = isBrowser ?
   require('electron').BrowserWindow :
@@ -107,16 +108,27 @@ function listenToIpc(channel) {
  */
 function getSendMethod(windowOrWebView) {
   if (!windowOrWebView) return (...a) => ipc.send(...a);
+  if ('isDestroyed' in windowOrWebView && windowOrWebView.isDestroyed()) {
+    d(`BrowserWindow has been destroyed`);
+    return noop;
+  }
 
-  return ('webContents' in windowOrWebView) ?
-    (...a) => {
+  if ('webContents' in windowOrWebView) {
+    if (windowOrWebView.webContents.isDestroyed()) {
+      d(`WebContents has been destroyed`);
+      return noop;
+    }
+
+    return (...a) => {
       d(`webContents send: ${JSON.stringify(a)}`);
       windowOrWebView.webContents.send(...a);
-    } :
-    (...a) => {
+    };
+  } else {
+    return (...a) => {
       d(`webView send: ${JSON.stringify(a)}`);
       windowOrWebView.send(...a);
     };
+  }
 }
 
 /**
