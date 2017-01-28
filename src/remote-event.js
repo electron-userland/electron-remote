@@ -15,7 +15,7 @@ if (!isBrowser) {
   remote.require(require.resolve('./remote-event-browser'));
 }
 
-const d = require('debug-electron')('remote-event');
+const d = require('debug')('remote-event');
 
 /**
  * Safely subscribes to an event on a BrowserWindow or its WebContents. This
@@ -30,15 +30,39 @@ const d = require('debug-electron')('remote-event');
  *                                Unsubscribing from the Observable will
  *                                remove the event listener.
  */
-export function fromRemoteWindow(browserWindow, event, onWebContents=false) {
+export function fromRemoteWindow(browserWindowOrWebView, event, onWebContents=false) {
+  let ctorName = Object.getPrototypeOf(browserWindowOrWebView).constructor.name;
+
   if (isBrowser) {
-    return onWebContents ?
-      Observable.fromEvent(browserWindow.webContents, event, (...args) => args) :
-      Observable.fromEvent(browserWindow, event, (...args) => args);
+    if (onWebContents) {
+      let wc;
+      if (ctorName === 'WebContents') {
+        wc = browserWindowOrWebView;
+      } else {
+        wc = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents());
+      }
+      return Observable.fromEvent(wc, event, (...args) => args);
+    } else {
+      Observable.fromEvent(browserWindowOrWebView, event, (...args) => args);
+    }
   }
 
-  let type = 'window';
-  let id = browserWindow.id;
+
+  if ((ctorName === 'webview' || ctorName === 'WebContents') && !onWebContents) {
+    throw new Error("WebViews and WebContents can only be used with onWebContents=true");
+  }
+
+  let type = onWebContents ? 'webcontents' : 'window';
+  let id;
+  if (onWebContents) {
+    if (ctorName === 'WebContents') {
+      id = browserWindowOrWebView.id;
+    } else {
+      id = ('webContents' in browserWindowOrWebView ? browserWindowOrWebView.webContents : browserWindowOrWebView.getWebContents()).id;
+    }
+  } else {
+    id = browserWindowOrWebView.id;
+  }
 
   const key = `electron-remote-event-${type}-${id}-${event}-${remote.getCurrentWebContents().id}`;
 

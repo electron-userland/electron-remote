@@ -22,7 +22,7 @@ import {createProxyForRemote, executeJavaScriptMethod, executeJavaScriptMethodOb
 
 import './custom-operators';
 
-const d = require('debug-electron')('electron-remote:renderer-require');
+const d = require('debug')('electron-remote:renderer-require');
 
 const BrowserWindow = process.type === 'renderer' ?
   require('electron').remote.BrowserWindow :
