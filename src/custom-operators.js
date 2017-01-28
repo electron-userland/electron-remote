@@ -3,6 +3,7 @@ import {Scheduler} from 'rxjs/Scheduler';
 
 import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/switch';
+import 'rxjs/add/observable/timer';
 
 const newCoolOperators = {
   guaranteedThrottle: function (time, scheduler=Scheduler.timeout) {
