@@ -64,7 +64,10 @@ function getReplyMethod(request) {
   let target = findTargetFromParentInfo(request);
 
   if (target) {
-    return (...a) => target.send(...a);
+    return (...a) => {
+      if ('isDestroyed' in target && target.isDestroyed()) return;
+      target.send(...a);
+    };
   } else {
     d("Using reply to main process");
     return (...a) => ipc.send(...a);
