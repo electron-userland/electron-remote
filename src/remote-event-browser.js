@@ -1,4 +1,4 @@
-import {BrowserWindow, ipcMain} from 'electron';
+import {BrowserWindow, webContents, ipcMain} from 'electron';
 import {Observable} from 'rxjs/Observable';
 
 import 'rxjs/add/observable/fromEvent';
@@ -7,7 +7,7 @@ import 'rxjs/add/operator/do';
 import 'rxjs/add/operator/takeUntil';
 
 const eventListenerTable = {};
-const d = require('debug-electron')('remote-event-browser');
+const d = require('debug')('remote-event-browser');
 
 function initialize() {
   d('Initializing browser-half of remote-event');
@@ -19,6 +19,9 @@ function initialize() {
     switch(type) {
     case 'window':
       target = BrowserWindow.fromId(id);
+      break;
+    case 'webcontents':
+      target = webContents.fromId(id);
       break;
     default:
       target = null;

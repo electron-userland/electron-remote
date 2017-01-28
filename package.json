@@ -1,6 +1,6 @@
 {
   "name": "electron-remote",
-  "version": "1.0.7",
+  "version": "1.1.1",
   "description": "Execute JavaScript in remote Electron processes, but more betterer",
   "scripts": {
     "doc": "esdoc -c ./esdoc.json",
@@ -28,8 +28,7 @@
   "main": "lib/index.js",
   "homepage": "https://github.com/paulcbetts/electron-remote",
   "dependencies": {
-    "debug": "^2.2.0",
-    "debug-electron": "^0.0.2",
+    "debug": "^2.5.1",
     "hashids": "^1.1.1",
     "pify": "^2.3.0",
     "rxjs": "^5.0.0-beta.12",
@@ -46,7 +45,7 @@
     "chai-as-promised": "^6.0.0",
     "cross-env": "^3.0.0",
     "electron-mocha": "^3.1.1",
-    "electron-prebuilt-compile": "1.4.1",
+    "electron-prebuilt-compile": "1.4.14",
     "esdoc": "^0.4.8",
     "esdoc-es7-plugin": "0.0.3",
     "esdoc-plugin-async-to-sync": "^0.5.0",
