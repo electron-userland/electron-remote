@@ -4,12 +4,19 @@ describe('the requireTaskPool method', function() {
   this.timeout(10*1000);
 
   it('can make a bunch of requests at once', async function() {
-    const { getJSON } = requireTaskPool(require.resolve('../src/remote-ajax', 10));
+    const { getJSON } = requireTaskPool(
+      require.resolve('../src/remote-ajax'),
+      10,     // Allow 10 windows open at a time
+      200);   // Close idle windows after 500ms
 
-    for (let i = 0; i < 20; i++) {
-      const result = await getJSON('https://httpbin.org/get');
-      expect(result.url).to.equal('https://httpbin.org/get');
-    }
+    const emptyArray = Array.apply(null, Array(20)).map(() => 0);
+    const result = await Promise.all(emptyArray.map(() => getJSON('https://httpbin.org/get')));
+
+    expect(result.length).to.equal(20);
+    result.forEach(({ url }) => expect(url).to.equal('https://httpbin.org/get'));
+
+    // Give the windows some time to close.
+    await new Promise((res) => setTimeout(res, 400));
   });
 });
 
