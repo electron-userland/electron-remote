@@ -117,7 +117,7 @@ function getSendMethod(windowOrWebView) {
       if (!windowOrWebView.webContents.isDestroyed()) {
         windowOrWebView.webContents.send(...a);
       } else {
-        d(`WebContents has been destroyed`);
+        throw new Error(`WebContents has been destroyed`);
       }
     };
   } else {
