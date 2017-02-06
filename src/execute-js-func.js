@@ -63,7 +63,10 @@ function getReplyMethod(request) {
   let target = findTargetFromParentInfo(request);
 
   if (target) {
-    return (...a) => target.send(...a);
+    return (...a) => {
+      if ('isDestroyed' in target && target.isDestroyed()) return;
+      target.send(...a);
+    };
   } else {
     d("Using reply to main process");
     return (...a) => ipc.send(...a);
@@ -108,15 +111,21 @@ function listenToIpc(channel) {
 function getSendMethod(windowOrWebView) {
   if (!windowOrWebView) return (...a) => ipc.send(...a);
 
-  return ('webContents' in windowOrWebView) ?
-    (...a) => {
+  if ('webContents' in windowOrWebView) {
+    return (...a) => {
       d(`webContents send: ${JSON.stringify(a)}`);
-      windowOrWebView.webContents.send(...a);
-    } :
-    (...a) => {
+      if (!windowOrWebView.webContents.isDestroyed()) {
+        windowOrWebView.webContents.send(...a);
+      } else {
+        throw new Error(`WebContents has been destroyed`);
+      }
+    };
+  } else {
+    return (...a) => {
       d(`webView send: ${JSON.stringify(a)}`);
       windowOrWebView.send(...a);
     };
+  }
 }
 
 /**
