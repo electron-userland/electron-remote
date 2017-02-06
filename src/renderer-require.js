@@ -34,7 +34,7 @@ const BrowserWindow = process.type === 'renderer' ?
  * instead.
  *
  * @param  {string} modulePath  The path of the module to include.
- * * @return {Object}             Returns an Object with a `module` which is a Proxy
+ * @return {Object}             Returns an Object with a `module` which is a Proxy
  *                              object, and a `unsubscribe` method that will clean up
  *                              the window.
  */
@@ -67,7 +67,7 @@ export async function rendererRequireDirect(modulePath) {
     module: createProxyForRemote(bw).requiredModule,
     executeJavaScriptMethod: (chain, ...args) => executeJavaScriptMethod(bw, chain, ...args),
     executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),
-    unsubscribe: () => bw.close()
+    unsubscribe: () => bw.isDestroyed() ? bw.destroy() : bw.close()
   };
 }
 
@@ -83,11 +83,13 @@ export async function rendererRequireDirect(modulePath) {
  *                                   `require.resolve` it.
  * @param  {Number} maxConcurrency   The maximum number of concurrent processes
  *                                   to run. Defaults to 4.
+ * @param  {Number} idleTimeout      The amount of time to wait before closing
+ *                                   a BrowserWindow as idle.
  *
  * @return {Proxy}                   An ES6 Proxy object representing the module.
  */
-export function requireTaskPool(modulePath, maxConcurrency=4) {
-  return new RendererTaskpoolItem(modulePath, maxConcurrency).moduleProxy;
+export function requireTaskPool(modulePath, maxConcurrency=4, idleTimeout=5*1000) {
+  return new RendererTaskpoolItem(modulePath, maxConcurrency, idleTimeout).moduleProxy;
 }
 
 /**
@@ -96,7 +98,7 @@ export function requireTaskPool(modulePath, maxConcurrency=4) {
  * a cool way.
  */
 class RendererTaskpoolItem {
-  constructor(modulePath, maxConcurrency) {
+  constructor(modulePath, maxConcurrency, idleTimeout) {
     const freeWindowList = [];
     const invocationQueue = new Subject();
     const completionQueue = new Subject();
@@ -148,7 +150,7 @@ class RendererTaskpoolItem {
 
     // If we haven't received any invocations within a certain idle timeout
     // period, burn all of our BrowserWindow instances
-    completionQueue.guaranteedThrottle(5*1000).subscribe(() => {
+    completionQueue.guaranteedThrottle(idleTimeout).subscribe(() => {
       d(`Freeing ${freeWindowList.length} taskpool processes`);
       while (freeWindowList.length > 0) {
         let wnd = freeWindowList.pop();
