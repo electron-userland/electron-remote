@@ -45,6 +45,7 @@ export async function rendererRequireDirect(modulePath) {
   let ready = Observable.merge(
     fromRemoteWindow(bw, 'did-finish-load', true),
     fromRemoteWindow(bw, 'did-fail-load', true)
+      .filter(([, errCode]) => errCode !== 0)
       .mergeMap(([, , errMsg]) => Observable.throw(new Error(errMsg)))
     ).take(1).toPromise();
 
