@@ -20,9 +20,9 @@ let isBrowser = (process.type === 'browser');
 let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 
 const d = require('debug')('electron-remote:execute-js-func');
-const BrowserWindow = isBrowser ?
-  require('electron').BrowserWindow :
-  require('electron').remote.BrowserWindow;
+const webContents = isBrowser ?
+  require('electron').webContents :
+  require('electron').remote.webContents;
 
 let nextId = 1;
 const hashIds = new Hashids();
@@ -35,7 +35,7 @@ function getNextId() {
  * Determines the identifier for the current process (i.e. the thing we can use
  * to route messages to it)
  *
- * @return {object} An object with either a `guestInstanceId` or a `browserWindowId`
+ * @return {object} An object with either a `guestInstanceId` or a `webContentsId`
  */
 export function getSenderIdentifier() {
   if (isBrowser) return {};
@@ -45,7 +45,7 @@ export function getSenderIdentifier() {
   }
 
   return {
-    browserWindowId: require('electron').remote.getCurrentWindow().id
+    webContentsId: require('electron').remote.getCurrentWebContents().id
   };
 }
 
@@ -163,11 +163,11 @@ function listenerForId(windowOrWebView, id, timeout) {
 
 /**
  * Given the parentInfo returned from {getSenderIdentifier}, returns the actual
- * BrowserWindow or WebContents that it represents.
+ * WebContents that it represents.
  *
- * @param  {object} parentInfo            The renderer process identifying info.
+ * @param  {object} parentInfo  The renderer process identifying info.
  *
- * @return {BrowserWindow|WebContents}    An actual Renderer Process object.
+ * @return {WebContents}        An actual Renderer Process object.
  *
  * @private
  */
@@ -177,8 +177,8 @@ function findTargetFromParentInfo(parentInfo=window.parentInfo) {
     return require('electron').remote.getGuestWebContents(parentInfo.guestInstanceId);
   }
 
-  if ('browserWindowId' in parentInfo) {
-    return BrowserWindow.fromId(parentInfo.browserWindowId);
+  if ('webContentsId' in parentInfo) {
+    return webContents.fromId(parentInfo.webContentsId);
   }
 
   return null;
@@ -197,8 +197,8 @@ export function setParentInformation(windowOrWebView) {
 
   if (info.guestInstanceId) {
     ret = remoteEval(windowOrWebView, `window.parentInfo = { guestInstanceId: ${info.guestInstanceId} }`);
-  } else if (info.browserWindowId) {
-    ret = remoteEval(windowOrWebView, `window.parentInfo = { browserWindowId: ${info.browserWindowId} }`);
+  } else if (info.webContentsId) {
+    ret = remoteEval(windowOrWebView, `window.parentInfo = { webContentsId: ${info.webContentsId} }`);
   } else {
     ret = remoteEval(windowOrWebView, `window.parentInfo = {}`);
   }
