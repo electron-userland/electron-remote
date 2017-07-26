@@ -16,9 +16,8 @@ import 'rxjs/add/operator/toPromise';
 
 const requestChannel = 'execute-javascript-request';
 const responseChannel = 'execute-javascript-response';
-
 const rootEvalProxyName = 'electron-remote-eval-proxy';
-const rootModuleProxyName = 'electron-remote-module-proxy';
+const requireElectronModule = '__requireElectronModule__';
 
 const electron = require('electron');
 const isBrowser = (process.type === 'browser');
@@ -358,40 +357,7 @@ export function createProxyForRemote(windowOrWebView) {
  *                            All methods will return a Promise.
  */
 export function createProxyForMainProcessModule(moduleName) {
-  return RecursiveProxyHandler.create(rootModuleProxyName, (methodChain, args) => {
-    let chain = methodChain.splice(1);
-    chain.unshift(moduleName);
-
-    d(`Invoking ${moduleName}${chain.join('.')}(${JSON.stringify(args)})`);
-    return executeMainProcessMethod(chain, ...args).toPromise();
-  });
-}
-
-/**
- * Similar to executeJavaScriptMethod, but invokes a specific method on a main
- * process module rather than eval'ing code.
- *
- * @param {Array<String>} pathToObject  The module and all parts of the method
- *                                      chain, e.g., ['app', 'getAppMemoryInfo']
- * @param {Array} args                  The arguments to pass to the method
- * @returns {Observable}                The result of evaluating the method or
- *                                      property. Must be JSON serializable.
- */
-function executeMainProcessMethod(pathToObject, ...args) {
-  const send = getSendMethod();
-  const [moduleName, ...methodParts] = pathToObject;
-  const path = methodParts.join('.');
-
-  if (!path.match(/^[a-zA-Z0-9\._]+$/)) {
-    return Observable.throw(new Error(`pathToObject must be of the form foo.bar.baz (got ${path})`));
-  }
-
-  const toSend = Object.assign({ args, id: getNextId(), moduleName, path }, getSenderIdentifier());
-  const ret = listenerForId(toSend.id, 5*1000);
-
-  d(`Sending: ${JSON.stringify(toSend)}`);
-  send(requestChannel, toSend);
-  return ret;
+  return createProxyForRemote(null)[requireElectronModule][moduleName];
 }
 
 /**
@@ -425,7 +391,7 @@ function objectAndParentGivenPath(path) {
 }
 
 /**
- * Given an object path and arguments, actually invokes the method  and returns
+ * Given an object path and arguments, actually invokes the method and returns
  * the result. This method is run on the target side (i.e. not the one doing
  * the invoking). This method tries to figure out the return value of an object
  * and do the right thing, including awaiting Promises to get their values.
@@ -457,6 +423,23 @@ async function evalRemoteMethod(path, args) {
 }
 
 /**
+ * Invokes a method on a module in the main process.
+ *
+ * @param {string} moduleName         The name of the module to require
+ * @param {Array<string>} methodChain The path to the module, e.g., ['dock', 'bounce']
+ * @param {Array} args                The arguments to pass to the method
+ *
+ * @returns                           The result of calling the method
+ *
+ * @private
+ */
+function executeMainProcessMethod(moduleName, methodChain, args) {
+  const theModule = electron[moduleName];
+  const path = methodChain.join('.');
+  return get(theModule, path).apply(theModule, args);
+}
+
+/**
  * Initializes the IPC listener that {executeJavaScriptMethod} will send IPC
  * messages to. You need to call this method in any process that you want to
  * execute remote methods on.
@@ -472,12 +455,13 @@ export function initializeEvalHandler() {
     try {
       if (receive.eval) {
         receive.result = eval(receive.eval);
-      } else if (receive.moduleName) {
-        const theModule = electron[receive.moduleName];
-        const methodToCall = get(theModule, receive.path);
-        receive.result = methodToCall.apply(theModule, receive.args);
       } else {
-        receive.result = await evalRemoteMethod(receive.path, receive.args);
+        const parts = receive.path.split('.');
+        if (parts.length > 1 && parts[0] === requireElectronModule) {
+          receive.result = executeMainProcessMethod(parts[1], parts.splice(2), receive.args);
+        } else {
+          receive.result = await evalRemoteMethod(receive.path, receive.args);
+        }
       }
 
       d(`Replying! ${JSON.stringify(receive)} - ID is ${e.sender}`);
