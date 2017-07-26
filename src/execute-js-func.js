@@ -1,6 +1,7 @@
 import {Observable} from 'rxjs/Observable';
 import {Subscription} from 'rxjs/Subscription';
 import Hashids from 'hashids';
+import get from 'lodash.get';
 
 import 'rxjs/add/observable/of';
 import 'rxjs/add/observable/throw';
@@ -16,13 +17,17 @@ import 'rxjs/add/operator/toPromise';
 const requestChannel = 'execute-javascript-request';
 const responseChannel = 'execute-javascript-response';
 
-let isBrowser = (process.type === 'browser');
-let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
+const rootEvalProxyName = 'electron-remote-eval-proxy';
+const rootModuleProxyName = 'electron-remote-module-proxy';
+
+const electron = require('electron');
+const isBrowser = (process.type === 'browser');
+const ipc = electron[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 
 const d = require('debug')('electron-remote:execute-js-func');
 const webContents = isBrowser ?
-  require('electron').webContents :
-  require('electron').remote.webContents;
+  electron.webContents :
+  electron.remote.webContents;
 
 let nextId = 1;
 const hashIds = new Hashids();
@@ -133,7 +138,6 @@ function getSendMethod(windowOrWebView) {
  * to a remoted call. It filters on ID, then cancels itself once either a
  * response is returned, or it times out.
  *
- * @param  {BrowserWindow|WebView} windowOrWebView    A renderer process
  * @param  {Guid} id                                  The ID of the sent request
  * @param  {Number} timeout                           The timeout in milliseconds
  *
@@ -143,7 +147,7 @@ function getSendMethod(windowOrWebView) {
  *
  * @private
  */
-function listenerForId(windowOrWebView, id, timeout) {
+function listenerForId(id, timeout) {
   return listenToIpc(responseChannel)
     .do(([x]) => d(`Got IPC! ${x.id} === ${id}; ${JSON.stringify(x)}`))
     .filter(([receive]) => receive.id === id && id)
@@ -227,7 +231,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
   }
 
   let toSend = Object.assign({ id: getNextId(), eval: str }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
+  let ret = listenerForId(toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -287,7 +291,7 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
   }
 
   let toSend = Object.assign({ args, id: getNextId(), path: pathToObject }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
+  let ret = listenerForId(toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -337,12 +341,57 @@ export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) 
  *                      value.
  */
 export function createProxyForRemote(windowOrWebView) {
-  return RecursiveProxyHandler.create('__removeme__', (methodChain, args) => {
+  return RecursiveProxyHandler.create(rootEvalProxyName, (methodChain, args) => {
     let chain = methodChain.splice(1);
 
     d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
     return executeJavaScriptMethod(windowOrWebView, chain, ...args);
   });
+}
+
+/**
+ * Creates an object that is a representation of a module in the main process,
+ * but with all of its methods Promisified.
+ *
+ * @param {String} moduleName The name of the main process module to proxy
+ * @returns {Object}          A Proxy object that will invoke methods remotely.
+ *                            All methods will return a Promise.
+ */
+export function createProxyForMainProcessModule(moduleName) {
+  return RecursiveProxyHandler.create(rootModuleProxyName, (methodChain, args) => {
+    let chain = methodChain.splice(1);
+    chain.unshift(moduleName);
+
+    d(`Invoking ${moduleName}${chain.join('.')}(${JSON.stringify(args)})`);
+    return executeMainProcessMethod(chain, ...args).toPromise();
+  });
+}
+
+/**
+ * Similar to executeJavaScriptMethod, but invokes a specific method on a main
+ * process module rather than eval'ing code.
+ *
+ * @param {Array<String>} pathToObject  The module and all parts of the method
+ *                                      chain, e.g., ['app', 'getAppMemoryInfo']
+ * @param {Array} args                  The arguments to pass to the method
+ * @returns {Observable}                The result of evaluating the method or
+ *                                      property. Must be JSON serializable.
+ */
+function executeMainProcessMethod(pathToObject, ...args) {
+  const send = getSendMethod();
+  const [moduleName, ...methodParts] = pathToObject;
+  const path = methodParts.join('.');
+
+  if (!path.match(/^[a-zA-Z0-9\._]+$/)) {
+    return Observable.throw(new Error(`pathToObject must be of the form foo.bar.baz (got ${path})`));
+  }
+
+  const toSend = Object.assign({ args, id: getNextId(), moduleName, path }, getSenderIdentifier());
+  const ret = listenerForId(toSend.id, 5*1000);
+
+  d(`Sending: ${JSON.stringify(toSend)}`);
+  send(requestChannel, toSend);
+  return ret;
 }
 
 /**
@@ -423,6 +472,10 @@ export function initializeEvalHandler() {
     try {
       if (receive.eval) {
         receive.result = eval(receive.eval);
+      } else if (receive.moduleName) {
+        const theModule = electron[receive.moduleName];
+        const methodToCall = get(theModule, receive.path);
+        receive.result = methodToCall.apply(theModule, receive.args);
       } else {
         receive.result = await evalRemoteMethod(receive.path, receive.args);
       }

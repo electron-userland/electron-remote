@@ -7,6 +7,18 @@ electron-remote provides an alternative to Electron's `remote` module based arou
 
 ## The Quickest of Quick Starts
 
+###### Calling main process modules from a renderer
+
+```js
+import { createProxyForMainProcessModule } from 'electron-remote';
+
+// app is now a proxy for the app module in the main process
+const app = createProxyForMainProcessModule('app');
+
+// The difference is all methods return a Promise instead of blocking
+const memoryInfo = await app.getAppMemoryInfo();
+```
+
 ###### Calling code in other windows
 
 ```js
@@ -33,7 +45,7 @@ let result = await myCoolModule.calculateDigitsOfPi(100000);
 
 ## But I like Remote!
 
-Remote is super convenient! But it also has some downsides - its main downside is that its action is **synchronous**. This means that both the main and window processes will _wait_ for a method to finish running. Even for quick methods, calling it too often can introduce scroll jank and generally cause performance problems. 
+Remote is super convenient! But it also has some downsides - its main downside is that its action is **synchronous**. This means that both the main and window processes will _wait_ for a method to finish running. Even for quick methods, calling it too often can introduce scroll jank and generally cause performance problems.
 
 electron-remote is a version of remote that, while less ergonomic, guarantees that it won't block the calling thread.
 
@@ -78,9 +90,12 @@ window.addNumbers = (a,b) => a + b;
 let myWindowProxy = createProxyForRemote(myWindow);
 myWindowProxy.addNumbers(5, 5)
   .then((x) => console.log(x));
-  
+
 >>> 10
 ```
+
+#### Using createProxyForMainProcessModule
+This is meant to be a drop-in replacement for places you would have used `remote` in a renderer process. It's almost identical to `createProxyForRemote`, but instead of `eval`ing JavaScript it can only call methods on main process modules. It still has all the same benefits: asynchronous IPC instead of an `ipc.sendSync`.
 
 ## Here Be Dragons
 
