@@ -1,6 +1,7 @@
 import {Observable} from 'rxjs/Observable';
 import {Subscription} from 'rxjs/Subscription';
 import Hashids from 'hashids';
+import get from 'lodash.get';
 
 import 'rxjs/add/observable/of';
 import 'rxjs/add/observable/throw';
@@ -15,14 +16,17 @@ import 'rxjs/add/operator/toPromise';
 
 const requestChannel = 'execute-javascript-request';
 const responseChannel = 'execute-javascript-response';
+const rootEvalProxyName = 'electron-remote-eval-proxy';
+const requireElectronModule = '__requireElectronModule__';
 
-let isBrowser = (process.type === 'browser');
-let ipc = require('electron')[isBrowser ? 'ipcMain' : 'ipcRenderer'];
+const electron = require('electron');
+const isBrowser = (process.type === 'browser');
+const ipc = electron[isBrowser ? 'ipcMain' : 'ipcRenderer'];
 
 const d = require('debug')('electron-remote:execute-js-func');
 const webContents = isBrowser ?
-  require('electron').webContents :
-  require('electron').remote.webContents;
+  electron.webContents :
+  electron.remote.webContents;
 
 let nextId = 1;
 const hashIds = new Hashids();
@@ -133,7 +137,6 @@ function getSendMethod(windowOrWebView) {
  * to a remoted call. It filters on ID, then cancels itself once either a
  * response is returned, or it times out.
  *
- * @param  {BrowserWindow|WebView} windowOrWebView    A renderer process
  * @param  {Guid} id                                  The ID of the sent request
  * @param  {Number} timeout                           The timeout in milliseconds
  *
@@ -143,7 +146,7 @@ function getSendMethod(windowOrWebView) {
  *
  * @private
  */
-function listenerForId(windowOrWebView, id, timeout) {
+function listenerForId(id, timeout) {
   return listenToIpc(responseChannel)
     .do(([x]) => d(`Got IPC! ${x.id} === ${id}; ${JSON.stringify(x)}`))
     .filter(([receive]) => receive.id === id && id)
@@ -227,7 +230,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
   }
 
   let toSend = Object.assign({ id: getNextId(), eval: str }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
+  let ret = listenerForId(toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -287,7 +290,7 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
   }
 
   let toSend = Object.assign({ args, id: getNextId(), path: pathToObject }, getSenderIdentifier());
-  let ret = listenerForId(windowOrWebView, toSend.id, timeout);
+  let ret = listenerForId(toSend.id, timeout);
 
   d(`Sending: ${JSON.stringify(toSend)}`);
   send(requestChannel, toSend);
@@ -337,12 +340,24 @@ export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) 
  *                      value.
  */
 export function createProxyForRemote(windowOrWebView) {
-  return RecursiveProxyHandler.create('__removeme__', (methodChain, args) => {
+  return RecursiveProxyHandler.create(rootEvalProxyName, (methodChain, args) => {
     let chain = methodChain.splice(1);
 
     d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
     return executeJavaScriptMethod(windowOrWebView, chain, ...args);
   });
+}
+
+/**
+ * Creates an object that is a representation of a module in the main process,
+ * but with all of its methods Promisified.
+ *
+ * @param {String} moduleName The name of the main process module to proxy
+ * @returns {Object}          A Proxy object that will invoke methods remotely.
+ *                            All methods will return a Promise.
+ */
+export function createProxyForMainProcessModule(moduleName) {
+  return createProxyForRemote(null)[requireElectronModule][moduleName];
 }
 
 /**
@@ -376,7 +391,7 @@ function objectAndParentGivenPath(path) {
 }
 
 /**
- * Given an object path and arguments, actually invokes the method  and returns
+ * Given an object path and arguments, actually invokes the method and returns
  * the result. This method is run on the target side (i.e. not the one doing
  * the invoking). This method tries to figure out the return value of an object
  * and do the right thing, including awaiting Promises to get their values.
@@ -408,6 +423,23 @@ async function evalRemoteMethod(path, args) {
 }
 
 /**
+ * Invokes a method on a module in the main process.
+ *
+ * @param {string} moduleName         The name of the module to require
+ * @param {Array<string>} methodChain The path to the module, e.g., ['dock', 'bounce']
+ * @param {Array} args                The arguments to pass to the method
+ *
+ * @returns                           The result of calling the method
+ *
+ * @private
+ */
+function executeMainProcessMethod(moduleName, methodChain, args) {
+  const theModule = electron[moduleName];
+  const path = methodChain.join('.');
+  return get(theModule, path).apply(theModule, args);
+}
+
+/**
  * Initializes the IPC listener that {executeJavaScriptMethod} will send IPC
  * messages to. You need to call this method in any process that you want to
  * execute remote methods on.
@@ -424,7 +456,12 @@ export function initializeEvalHandler() {
       if (receive.eval) {
         receive.result = eval(receive.eval);
       } else {
-        receive.result = await evalRemoteMethod(receive.path, receive.args);
+        const parts = receive.path.split('.');
+        if (parts.length > 1 && parts[0] === requireElectronModule) {
+          receive.result = executeMainProcessMethod(parts[1], parts.splice(2), receive.args);
+        } else {
+          receive.result = await evalRemoteMethod(receive.path, receive.args);
+        }
       }
 
       d(`Replying! ${JSON.stringify(receive)} - ID is ${e.sender}`);

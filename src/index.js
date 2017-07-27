@@ -4,13 +4,14 @@ import * as remoteEvent from './remote-event';
 
 const executeJsFuncExports = [
   'createProxyForRemote',
-  'getSenderIdentifier', 
+  'createProxyForMainProcessModule',
+  'getSenderIdentifier',
   'executeJavaScriptMethodObservable',
   'executeJavaScriptMethod',
   'initializeEvalHandler',
-  'remoteEvalObservable', 
+  'remoteEvalObservable',
   'remoteEval',
-  'setParentInformation', 
+  'setParentInformation',
   'RecursiveProxyHandler'
 ];
 
