@@ -423,7 +423,8 @@ async function evalRemoteMethod(path, args) {
 }
 
 /**
- * Invokes a method on a module in the main process.
+ * Invokes a method on a module in the main process. This method tries to figure out the return value of an object
+ * and do the right thing, including awaiting Promises to get their values.
  *
  * @param {string} moduleName         The name of the module to require
  * @param {Array<string>} methodChain The path to the module, e.g., ['dock', 'bounce']
@@ -433,10 +434,17 @@ async function evalRemoteMethod(path, args) {
  *
  * @private
  */
-function executeMainProcessMethod(moduleName, methodChain, args) {
+async function executeMainProcessMethod(moduleName, methodChain, args) {
   const theModule = electron[moduleName];
   const path = methodChain.join('.');
-  return get(theModule, path).apply(theModule, args);
+  let result = get(theModule, path).apply(theModule, args);
+
+  if (result && typeof(result) === 'object' && 'then' in result) {
+    d("result is Promise!");
+    result = await result;
+  }
+
+  return result;
 }
 
 /**
@@ -458,7 +466,7 @@ export function initializeEvalHandler() {
       } else {
         const parts = receive.path.split('.');
         if (parts.length > 1 && parts[0] === requireElectronModule) {
-          receive.result = executeMainProcessMethod(parts[1], parts.splice(2), receive.args);
+          receive.result = await executeMainProcessMethod(parts[1], parts.splice(2), receive.args);
         } else {
           receive.result = await evalRemoteMethod(receive.path, receive.args);
         }
