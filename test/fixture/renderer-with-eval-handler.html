@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script>
+      require('../../src/execute-js-func').initializeEvalHandler();
+      window.slowMethod = function() {
+        return new Promise(res => setTimeout(res, 1000));
+      };
+    </script>
+</head>
+<body>
+</body>
+</html>
