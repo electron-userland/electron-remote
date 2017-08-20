@@ -18,6 +18,7 @@ const requestChannel = 'execute-javascript-request';
 const responseChannel = 'execute-javascript-response';
 const rootEvalProxyName = 'electron-remote-eval-proxy';
 const requireElectronModule = '__requireElectronModule__';
+const defaultTimeout = 5*1000;
 
 const electron = require('electron');
 const isBrowser = (process.type === 'browser');
@@ -219,7 +220,7 @@ export function setParentInformation(windowOrWebView) {
  * @return {Observable}                             The result of the evaluation.
  *                                                  Must be JSON-serializable.
  */
-export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
+export function remoteEvalObservable(windowOrWebView, str, timeout=defaultTimeout) {
   let send = getSendMethod(windowOrWebView || findTargetFromParentInfo());
   if (!send) {
     return Observable.throw(new Error(`Unable to find a target for: ${JSON.stringify(window.parentInfo)}`));
@@ -247,7 +248,7 @@ export function remoteEvalObservable(windowOrWebView, str, timeout=5*1000) {
  * @return {Promise}                             The result of the evaluation.
  *                                               Must be JSON-serializable.
  */
-export function remoteEval(windowOrWebView, str, timeout=5*1000) {
+export function remoteEval(windowOrWebView, str, timeout=defaultTimeout) {
   return remoteEvalObservable(windowOrWebView, str, timeout).toPromise();
 }
 
@@ -322,7 +323,7 @@ export function executeJavaScriptMethodObservable(windowOrWebView, timeout, path
  *                                  property. Must be JSON serializable.
  */
 export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) {
-  return executeJavaScriptMethodObservable(windowOrWebView, 5*1000, pathToObject, ...args).toPromise();
+  return executeJavaScriptMethodObservable(windowOrWebView, defaultTimeout, pathToObject, ...args).toPromise();
 }
 
 /**
@@ -333,18 +334,19 @@ export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) 
  *                                                  in. If this parameter is
  *                                                  null, this will reference
  *                                                  the browser process.
+ * @param  {Number} timeout                         The timeout in milliseconds
  *
  * @return {Object}     A Proxy object that will invoke methods remotely.
  *                      Similar to {executeJavaScriptMethod}, methods will return
  *                      a Promise even if the target method returns a normal
  *                      value.
  */
-export function createProxyForRemote(windowOrWebView) {
+export function createProxyForRemote(windowOrWebView, timeout=defaultTimeout) {
   return RecursiveProxyHandler.create(rootEvalProxyName, (methodChain, args) => {
     let chain = methodChain.splice(1);
 
     d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
-    return executeJavaScriptMethod(windowOrWebView, chain, ...args);
+    return executeJavaScriptMethodObservable(windowOrWebView, timeout, chain, ...args).toPromise();
   });
 }
 
@@ -353,11 +355,13 @@ export function createProxyForRemote(windowOrWebView) {
  * but with all of its methods Promisified.
  *
  * @param {String} moduleName The name of the main process module to proxy
+ * @param {Number} timeout    The timeout in milliseconds
+ *
  * @returns {Object}          A Proxy object that will invoke methods remotely.
  *                            All methods will return a Promise.
  */
-export function createProxyForMainProcessModule(moduleName) {
-  return createProxyForRemote(null)[requireElectronModule][moduleName];
+export function createProxyForMainProcessModule(moduleName, timeout=defaultTimeout) {
+  return createProxyForRemote(null, timeout)[requireElectronModule][moduleName];
 }
 
 /**
