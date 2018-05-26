@@ -333,18 +333,19 @@ export function executeJavaScriptMethod(windowOrWebView, pathToObject, ...args) 
  *                                                  in. If this parameter is
  *                                                  null, this will reference
  *                                                  the browser process.
+ * @param  {number} timeout     The timeout to use, defaults to 240sec
  *
  * @return {Object}     A Proxy object that will invoke methods remotely.
  *                      Similar to {executeJavaScriptMethod}, methods will return
  *                      a Promise even if the target method returns a normal
  *                      value.
  */
-export function createProxyForRemote(windowOrWebView) {
+export function createProxyForRemote(windowOrWebView, timeout=240*1000) {
   return RecursiveProxyHandler.create(rootEvalProxyName, (methodChain, args) => {
     let chain = methodChain.splice(1);
 
     d(`Invoking ${chain.join('.')}(${JSON.stringify(args)})`);
-    return executeJavaScriptMethod(windowOrWebView, chain, ...args);
+    return executeJavaScriptMethodObservable(windowOrWebView, timeout, chain, ...args).toPromise();
   });
 }
 

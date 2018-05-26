@@ -34,11 +34,12 @@ const BrowserWindow = process.type === 'renderer' ?
  * instead.
  *
  * @param  {string} modulePath  The path of the module to include.
+ * @param  {number} timeout     The timeout to use, defaults to 240sec
  * @return {Object}             Returns an Object with a `module` which is a Proxy
  *                              object, and a `unsubscribe` method that will clean up
  *                              the window.
  */
-export async function rendererRequireDirect(modulePath) {
+export async function rendererRequireDirect(modulePath, timeout=240*1000) {
   let bw = new BrowserWindow({width: 500, height: 500, show: false});
   let fullPath = require.resolve(modulePath);
 
@@ -66,8 +67,8 @@ export async function rendererRequireDirect(modulePath) {
 
   return {
     module: createProxyForRemote(bw).requiredModule,
-    executeJavaScriptMethod: (chain, ...args) => executeJavaScriptMethod(bw, chain, ...args),
-    executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, 240*1000, chain, ...args),
+    executeJavaScriptMethod: (chain, ...args) => executeJavaScriptMethodObservable(bw, timeout, chain, ...args).toPromise(),
+    executeJavaScriptMethodObservable: (chain, ...args) => executeJavaScriptMethodObservable(bw, timeout, chain, ...args),
     unsubscribe: () => bw.isDestroyed() ? bw.destroy() : bw.close()
   };
 }
@@ -85,12 +86,14 @@ export async function rendererRequireDirect(modulePath) {
  * @param  {Number} maxConcurrency   The maximum number of concurrent processes
  *                                   to run. Defaults to 4.
  * @param  {Number} idleTimeout      The amount of time to wait before closing
- *                                   a BrowserWindow as idle.
+ *                                   a BrowserWindow as idle, in ms
+ * @param  {Number} methodTimeout    The amount of time to wait before a method
+ *                                   fails, in ms
  *
  * @return {Proxy}                   An ES6 Proxy object representing the module.
  */
-export function requireTaskPool(modulePath, maxConcurrency=4, idleTimeout=5*1000) {
-  return new RendererTaskpoolItem(modulePath, maxConcurrency, idleTimeout).moduleProxy;
+export function requireTaskPool(modulePath, maxConcurrency=4, idleTimeout=5*1000, methodTimeout=240*1000) {
+  return new RendererTaskpoolItem(modulePath, maxConcurrency, idleTimeout, methodTimeout).moduleProxy;
 }
 
 /**
@@ -99,7 +102,7 @@ export function requireTaskPool(modulePath, maxConcurrency=4, idleTimeout=5*1000
  * a cool way.
  */
 class RendererTaskpoolItem {
-  constructor(modulePath, maxConcurrency, idleTimeout) {
+  constructor(modulePath, maxConcurrency, idleTimeout, methodTimeout) {
     const freeWindowList = [];
     const invocationQueue = new Subject();
     const completionQueue = new Subject();
@@ -110,7 +113,7 @@ class RendererTaskpoolItem {
       let item = freeWindowList.pop();
       if (item) return Observable.of(item);
 
-      return Observable.fromPromise(rendererRequireDirect(modulePath));
+      return Observable.fromPromise(rendererRequireDirect(modulePath, methodTimeout));
     };
 
     // Here, we set up a pipeline that maps a stream of invocations (i.e.
