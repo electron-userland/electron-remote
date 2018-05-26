@@ -1,7 +1,7 @@
 import {rendererRequireDirect, requireTaskPool} from '../src/renderer-require';
 
 describe('the requireTaskPool method', function() {
-  this.timeout(10*1000);
+  this.timeout(30*1000);
 
   it('can make a bunch of requests at once', async function() {
     const { getJSON } = requireTaskPool(
