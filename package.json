@@ -46,7 +46,7 @@
     "chai-as-promised": "^6.0.0",
     "cross-env": "^3.0.0",
     "electron-mocha": "^6.0.3",
-    "electron-prebuilt-compile": "2.0.2",
+    "electron-prebuilt-compile": "4.0.0",
     "esdoc": "^1.1.0",
     "esdoc-es7-plugin": "0.0.3",
     "esdoc-plugin-async-to-sync": "^0.5.0",
