@@ -65,6 +65,10 @@ module.exports.downloadFileOrUrl = async function(pathOrUrl, target) {
     redirect: 'follow'
   });
 
+  if (!response.ok) {
+    throw new Error(`HTTP request returned error: ${response.status}: ${response.statusText}`);
+  }
+
   let fd = await fs.open(target, 'w');
   let length = 0;
   try {
@@ -87,10 +91,6 @@ module.exports.downloadFileOrUrl = async function(pathOrUrl, target) {
     }
   } finally {
     await fs.close(fd);
-  }
-
-  if (!response.ok) {
-    throw new Error(`HTTP request returned error: ${response.status}: ${response.statusText}`);
   }
 
   return length;
