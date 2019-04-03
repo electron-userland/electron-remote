@@ -1,4 +1,10 @@
-# electron-remote: an asynchronous 'remote', and more
+# DEPRECATED: electron-remote: an asynchronous 'remote', and more
+
+[![No Maintenance Intended](http://unmaintained.tech/badge.svg)](http://unmaintained.tech/)
+
+This project is no longer maintained, pull requests are no longer being reviewed or merged and issues are no longer being responded to. 
+
+---
 
 ![](https://img.shields.io/npm/dm/electron-remote.svg) <a href="http://paulcbetts.github.io/electron-remote/docs">![](http://paulcbetts.github.io/electron-remote/docs/badge.svg)</a>
 
